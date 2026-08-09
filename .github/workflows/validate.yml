@@ -18,7 +18,6 @@ jobs:
         run: python3 -m py_compile hooks/truth_gate.py
 
   bootstrap-v3:
-    if: github.ref == 'refs/heads/agent/cognitive-kernel-v3'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
