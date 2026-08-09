@@ -3,7 +3,7 @@ name: decision-forge
 description: >
   Use when comparing options, making a consequential choice, planning strategy, assessing risk, resolving conflict, negotiating, or deciding under uncertainty. Structure evidence, alternatives, reversibility, fairness, commitments, and next actions.
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
   source: "Hikmah Stack Decision Forge"
 ---
 
@@ -104,3 +104,18 @@ After every significant outcome:
 - The past is data, the future is unwritten — pay taxes to neither
 - Hold the mission, turn the heading
 - The lever you control is the only lever that moves the system
+
+
+## Memory-Aware Decision Gate
+
+Before a consequential decision:
+
+1. recall active constraints and commitments;
+2. retrieve prior outcomes that match the current failure/goal;
+3. surface corrections and contradictory claims beside supporting memories;
+4. separate precedent from current evidence;
+5. mark which option scores are evidence-backed versus estimated;
+6. reduce confidence when criteria are missing rather than inventing a value;
+7. write the decision and later outcome back as separate traces.
+
+Use `hikmah decide` for a deterministic weighted comparison when a structured frame is available.

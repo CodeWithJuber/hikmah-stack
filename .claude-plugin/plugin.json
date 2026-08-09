@@ -1,7 +1,7 @@
 {
   "name": "hikmah-stack",
-  "version": "2.0.0",
-  "description": "Judgment infrastructure for agentic AI: decision quality, failure-mode diagnosis, evidence discipline, and durable delivery.",
+  "version": "3.0.0",
+  "description": "Judgment and cognitive infrastructure for agentic AI: portable skills plus a deterministic Rust co-model kernel for memory, decisions, verification, and durable learning.",
   "author": {
     "name": "Juber Shaikh"
   },

@@ -12,7 +12,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate package
-        run: python3 scripts/validate.py
-      - name: Compile hook
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Rust format
+        run: cargo fmt --check
+      - name: Rust lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test --workspace
+      - name: Validate Hikmah package
+        run: cargo run -p hikmah-kernel -- validate --root .
+      - name: Compile Python compatibility fallback
         run: python3 -m py_compile hooks/truth_gate.py

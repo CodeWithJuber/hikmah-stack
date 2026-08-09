@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Conservative Codex Stop hook for Hikmah Stack.
+"""Zero-install compatibility fallback for Hikmah Truth Gate.
+
+The primary implementation is Rust (`runtime/hikmah-kernel`). This file remains
+only so a source-installed plugin can keep its narrow Stop check on machines that
+do not yet have the Hikmah binary or Rust toolchain.
+
+Conservative Codex Stop hook for Hikmah Stack.
 
 This hook does NOT fact-check. It only catches obvious unfinished placeholders or
 future-work promises in a response that simultaneously claims completion.

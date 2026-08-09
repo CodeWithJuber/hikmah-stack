@@ -3,7 +3,7 @@ name: operator-core
 description: >
   Use for judgment, leadership, discipline, communication, pressure, recovery, ethics, stewardship, personal effectiveness, or broad life/work operating principles. Apply durable principles without pretending they replace current domain evidence or professional advice.
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
   source: "Hikmah Stack Operator Core"
 ---
 
@@ -149,3 +149,18 @@ People: Lead soft. Consult. Commit. Repel harm with better. Say it straight.
 Core: Trust after diligence. Read first. Hold the balance. Focus. Steward the legacy.
 
 For detailed chapter content, field practices, and anchors, see the `references/` directory.
+
+
+## Cognitive Memory Protocol
+
+Human judgment is not only what you think now; it is what you remember, forget, correct, and carry forward.
+
+- **Encode distinctions:** observation is not belief; belief is not preference; preference is not commitment.
+- **Preserve provenance:** confidence without source memory is counterfeit certainty.
+- **Recall by purpose:** ask what memory changes the present decision, not what memory is easiest to retrieve.
+- **Keep corrections alive:** when later evidence changes a belief, preserve the correction path so the old error is not rediscovered as insight.
+- **Use prospective memory:** commitments need owner, trigger/deadline, and completion evidence.
+- **Replay outcomes:** reflect on what actually happened after action; plans without outcome memory teach the wrong lesson.
+- **Forget access, not accountability:** reduce attention to stale noise while keeping consequential history auditable under the retention policy.
+
+See `skills/cognitive-kernel/SKILL.md` and `docs/MEMORY.md`.
