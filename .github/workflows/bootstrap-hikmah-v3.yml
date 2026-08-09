@@ -5,7 +5,7 @@ on:
     branches:
       - agent/cognitive-kernel-v3
     paths:
-      - .hikmah-bootstrap/v3.patch.gz.b64
+      - .hikmah-bootstrap/READY
   workflow_dispatch:
 
 permissions:
@@ -21,9 +21,9 @@ jobs:
           fetch-depth: 0
       - name: Decode and apply v3 patch
         run: |
-          base64 -d .hikmah-bootstrap/v3.patch.gz.b64 | gzip -d > /tmp/hikmah-v3.patch
+          cat .hikmah-bootstrap/chunk-* | base64 -d | gzip -d > /tmp/hikmah-v3.patch
           git apply --index /tmp/hikmah-v3.patch
-          git rm .hikmah-bootstrap/v3.patch.gz.b64 .github/workflows/bootstrap-hikmah-v3.yml
+          git rm -r .hikmah-bootstrap .github/workflows/bootstrap-hikmah-v3.yml
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
