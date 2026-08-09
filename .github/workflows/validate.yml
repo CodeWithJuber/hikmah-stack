@@ -32,6 +32,27 @@ jobs:
         run: |
           git apply --index /tmp/hikmah-v3.patch
           git rm -r .hikmah-bootstrap .github/workflows/bootstrap-hikmah-v3.yml
+      - name: Apply compiler-review fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          trace = Path('runtime/hikmah-kernel/src/trace.rs')
+          text = trace.read_text()
+          text = text.replace(
+              '#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]\n#[serde(rename_all = "snake_case")]\npub enum PrivacyClass {\n    Public,\n    Private,\n    Sensitive,\n}\n\nimpl Default for PrivacyClass {\n    fn default() -> Self {\n        Self::Private\n    }\n}\n',
+              '#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]\n#[serde(rename_all = "snake_case")]\npub enum PrivacyClass {\n    Public,\n    #[default]\n    Private,\n    Sensitive,\n}\n'
+          )
+          trace.write_text(text)
+
+          validate = Path('runtime/hikmah-kernel/src/validate.rs')
+          text = validate.read_text()
+          text = text.replace(
+              '    for path in [".claude-plugin/plugin.json"] {\n        let other = plugin_version(root.join(path))?;\n        if other != version {\n            return Err(KernelError::Invalid(format!(\n                "manifest version mismatch: {path} has {other}, expected {version}"\n            )));\n        }\n    }\n',
+              '    let path = ".claude-plugin/plugin.json";\n    let other = plugin_version(root.join(path))?;\n    if other != version {\n        return Err(KernelError::Invalid(format!(\n            "manifest version mismatch: {path} has {other}, expected {version}"\n        )));\n    }\n'
+          )
+          validate.write_text(text)
+          PY
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
