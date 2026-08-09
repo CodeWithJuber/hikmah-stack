@@ -3,7 +3,7 @@ name: ship-guard
 description: >
   Use when building with AI agents, reviewing an implementation plan, defining acceptance criteria, preventing false completion claims, improving delivery discipline, reducing rework, or designing verification, logging, rollback, and handoff practices.
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
   source: "Hikmah Stack Ship Guard"
 ---
 
@@ -121,3 +121,15 @@ When the squeeze comes:
 - Stability is a schedule, not a mood
 - The plan that cannot say "if" meets the night that says "no"
 - Twelve rules, one terminal window
+
+
+## Durable Completion Loop
+
+Shipping is not the end of cognition. Before calling work complete:
+
+1. verify the requested artifact/result exists;
+2. capture the evidence of verification;
+3. record unresolved limitations explicitly;
+4. write the observed outcome, not merely “done,” into durable memory when memory is enabled;
+5. fulfill or supersede the corresponding commitment trace;
+6. if failure occurred, route it through `playbooks/error-to-learning.md` so the next agent inherits the correction.

@@ -1,7 +1,7 @@
 {
   "name": "hikmah-stack",
-  "version": "2.0.0",
-  "description": "Judgment infrastructure for agentic AI: portable skills for decisions, AI failure diagnosis, evidence discipline, and durable delivery.",
+  "version": "3.0.0",
+  "description": "Judgment and cognitive infrastructure for agentic AI: portable skills plus a deterministic Rust co-model kernel for memory, decisions, verification, and durable learning.",
   "author": {
     "name": "Juber Shaikh",
     "url": "https://github.com/CodeWithJuber"
@@ -23,7 +23,7 @@
   "interface": {
     "displayName": "Hikmah Stack",
     "shortDescription": "Judgment infrastructure for agentic AI",
-    "longDescription": "Five portable skills for human judgment, AI failure-mode diagnosis, structured decisions, delivery verification, and cross-skill orchestration.",
+    "longDescription": "Six portable skills plus a deterministic Rust cognitive kernel for human judgment, AI failure diagnosis, TraceWeave memory, structured decisions, delivery verification, and cross-skill orchestration.",
     "developerName": "Juber Shaikh",
     "category": "Productivity",
     "capabilities": [
@@ -33,7 +33,8 @@
     "websiteURL": "https://github.com/CodeWithJuber/hikmah-stack",
     "defaultPrompt": [
       "Use Hikmah Stack to structure this decision and expose uncertainty.",
-      "Use Agent Radar and Ship Guard to diagnose why this AI workflow keeps failing."
+      "Use Agent Radar and Ship Guard to diagnose why this AI workflow keeps failing.",
+      "Use Cognitive Kernel to design persistent model-independent memory for this agent."
     ]
   }
 }

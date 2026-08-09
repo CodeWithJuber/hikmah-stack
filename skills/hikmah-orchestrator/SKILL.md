@@ -5,7 +5,7 @@ description: >
   decision structure, and execution quality. Route deliberately across Operator Core,
   Agent Radar, Decision Forge, and Ship Guard, then synthesize one coherent action plan.
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
 ---
 
 # Hikmah Orchestrator — Cross-Skill Synthesis
@@ -18,16 +18,18 @@ Use this skill when one lens is not enough. Do not stack frameworks for decorati
 - **Agent Radar**: AI failure modes, trust calibration, hallucination, loops, context loss, sycophancy, slop, opacity, cost.
 - **Decision Forge**: options, evidence, risk, reversibility, consultation, justice, commitments, action.
 - **Ship Guard**: specifications, acceptance criteria, verification, logging, rollback, handoffs, completion claims.
+- **Cognitive Kernel**: persistent memory, model-independent state, contradiction handling, local co-model runtime, learning loops.
 
 ## Orchestration loop
 
 1. **Name the decision or outcome.** State what must change, not just what is interesting.
 2. **Classify the problem.** Clear, complicated, complex, or chaotic.
-3. **Select the minimum useful skills.** Usually two are enough; use all four only when the situation truly spans them.
+3. **Select the minimum useful skills.** Usually two are enough. Add Cognitive Kernel when state must persist across turns/sessions/models or when the system must learn from outcomes.
 4. **Separate evidence from inference.** Mark what was checked, what is inferred, and what remains unknown.
 5. **Apply consequence-sensitive rigor.** Higher stakes require stronger verification and qualified human input.
-6. **Synthesize once.** Resolve contradictions between frameworks instead of presenting four parallel essays.
-7. **End in executable moves.** Give owners, next actions, stop conditions, or acceptance criteria when the context supports them.
+6. **Run independent challenge lanes when consequences justify it.** Evidence, memory, risk, human impact, and delivery should report before synthesis.
+7. **Synthesize once.** Resolve contradictions between frameworks instead of presenting parallel essays.
+8. **End in executable moves.** Give owners, next actions, stop conditions, or acceptance criteria when the context supports them.
 
 ## Non-negotiables
 

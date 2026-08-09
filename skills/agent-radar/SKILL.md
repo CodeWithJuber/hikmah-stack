@@ -3,7 +3,7 @@ name: agent-radar
 description: >
   Use to diagnose AI-agent failure modes such as hallucination, looping, sycophancy, context loss, over-building, brittle automation, slop, hidden uncertainty, black-box behavior, cost leakage, or misplaced trust. Convert diagnosis into concrete controls and tests.
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
   source: "Hikmah Stack Agent Radar"
 ---
 
@@ -176,3 +176,19 @@ Relationship Failures: Discount flattery → Filter foam → Audit the box → P
 The Human's Answer: Kindle, don't grow → Strive for yourself → Assign meaning → Keep learning → Verify, specify, write, ship, log
 
 For detailed chapter content, field practices, and anchors, see the `references/` directory.
+
+
+## Memory Failure Radar
+
+Treat persistent memory as a new attack/failure surface:
+
+- **Context amnesia:** relevant commitments/constraints exist but are not recalled.
+- **False memory:** model-generated inference is stored as observed fact.
+- **Stale activation:** superseded information keeps outranking current evidence.
+- **Memory poisoning:** untrusted input becomes durable belief or procedure.
+- **Scope bleed:** one user/project/environment's memory is applied to another.
+- **Reconsolidation drift:** repeated summaries slowly change the original claim while provenance disappears.
+- **Outcome blindness:** a failed plan is remembered as a reusable method because the result was never written back.
+- **Privacy retention:** sensitive material persists because cognitive convenience outranked deletion policy.
+
+When one appears, use the Memory Integrity lens and TraceWeave playbook before adding more context or a larger model.

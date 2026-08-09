@@ -1,13 +1,13 @@
 {
-  "description": "Hikmah Stack completion hygiene gate for Codex.",
+  "description": "Hikmah Stack completion hygiene gate. Prefers the Rust kernel, with a zero-install compatibility fallback.",
   "hooks": {
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${PLUGIN_ROOT}/hooks/truth_gate.py",
-            "timeout": 5,
+            "command": "sh ${PLUGIN_ROOT}/hooks/truth_gate.sh",
+            "timeout": 8,
             "statusMessage": "Running Hikmah Truth Gate"
           }
         ]

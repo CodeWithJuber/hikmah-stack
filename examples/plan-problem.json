@@ -1,0 +1,10 @@
+{
+  "initial": ["code_ready"],
+  "goal": ["production_verified"],
+  "max_depth": 8,
+  "actions": [
+    {"name": "run_tests", "requires": ["code_ready"], "adds": ["tests_passed"], "removes": []},
+    {"name": "deploy_canary", "requires": ["tests_passed"], "adds": ["canary_live"], "removes": []},
+    {"name": "verify_canary", "requires": ["canary_live"], "adds": ["production_verified"], "removes": []}
+  ]
+}

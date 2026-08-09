@@ -1,61 +1,116 @@
 # Hikmah Stack
 
-**Judgment infrastructure for agentic AI.**
+**Judgment + cognitive infrastructure for agentic AI.**
 
-Hikmah Stack is an open-source capability pack for AI agents that need better decision structure, stronger evidence discipline, clearer AI-failure diagnosis, and more reliable delivery. The core is portable `SKILL.md` content. Host-specific manifests adapt that same core to **ChatGPT/Codex** and **Claude Code**.
+Hikmah Stack is an open-source, model-independent capability system for AI agents. Version **3.0.0** adds the **Hikmah Cognitive Kernel**, a deterministic Rust co-model runtime that owns persistent memory integrity, provenance, contradictions, commitments, decision scoring, parallel challenge lanes, and verification state outside a language model's hidden activations.
 
-> Version **2.0.0** · MIT License · Maintained by [Juber Shaikh](https://github.com/CodeWithJuber)
+> MIT · Maintained by [Juber Shaikh](https://github.com/CodeWithJuber)
 
-## Why this is not “Claude-only”
+## The idea
 
-A language model by itself does not install a repository, execute hooks, or discover local tools. Those extension behaviors belong to the **host/runtime** around the model. Hikmah Stack therefore separates the portable brain from the host adapter:
+Do not build an “agent brain” by stacking a bigger prompt, vector DB, graph, and another transformer. Start with cognitive invariants and choose a mechanism only when it earns its complexity.
 
 ```text
-                 ┌──────────────────────────────┐
-                 │        Hikmah Stack          │
-                 │  portable SKILL.md knowledge │
-                 └──────────────┬───────────────┘
-                                │
-              ┌─────────────────┼─────────────────┐
-              │                 │                 │
-      ChatGPT / Codex      Claude Code      Other skill-aware
-      .codex-plugin/       .claude-plugin/  agents / MCP hosts
+                    optional proposal engines
+          GPT / Claude / local LM / rules / search / future model
+                               |
+                               v
++------------------------------------------------------------------+
+|                    HIKMAH COGNITIVE KERNEL                        |
+| TraceWeave | CounterTrace | Decision Forge | Deliberation | Gate |
++-------------------------------+----------------------------------+
+                                |
+              append-only provenance + outcome memory
+                                |
+                  portable Hikmah Stack skills
 ```
 
-OpenAI's current plugin architecture supports plugins containing skills, MCP servers, and hooks, with public plugins shared across ChatGPT and Codex. MCP and Agent Skills provide a broader portability layer for other compatible hosts. See [Compatibility](docs/COMPATIBILITY.md).
+The kernel itself is **not a neural network and not a transformer**. Learned models are optional proposal engines behind a stable interface. That means a model can be swapped without deleting the agent's commitments, provenance, policy, or correction history.
 
-## The capability stack
+## Capability stack
 
 | Capability | Job |
 |---|---|
-| **Operator Core** (`operator-core`) | Human judgment, leadership, pressure, ethics, communication, recovery, stewardship |
-| **Agent Radar** (`agent-radar`) | Detect hallucination, loops, sycophancy, context loss, slop, opacity, cost leakage, brittle automation |
-| **Decision Forge** (`decision-forge`) | Compare options, classify uncertainty, test reversibility, weigh risk, fairness, commitments, action |
-| **Ship Guard** (`ship-guard`) | Acceptance criteria, verification, logging, rollback, handoffs, completion discipline |
-| **Hikmah Orchestrator** (`hikmah-orchestrator`) | Route across the other capabilities and synthesize one coherent plan |
-| **Truth Gate** | Conservative completion hygiene. Host-specific implementation, never a fake “fact checker” |
+| **Operator Core** | Human judgment, leadership, pressure, ethics, communication, recovery, stewardship |
+| **Agent Radar** | Hallucination, loops, context loss, sycophancy, slop, opacity, cost, memory failures |
+| **Decision Forge** | Options, uncertainty, evidence coverage, hard constraints, reversibility, action |
+| **Ship Guard** | Acceptance criteria, verification, rollback, handoffs, completion discipline, outcome write-back |
+| **Hikmah Orchestrator** | Cross-skill routing and synthesis |
+| **Cognitive Kernel** | Persistent memory, co-model runtime, contradiction handling, model-independent learning |
+| **Truth Gate** | Narrow completion hygiene; Rust-first runtime with zero-install compatibility fallback |
+
+## TraceWeave: memory without forcing a graph
+
+A memory is an immutable **trace**: kind, content, provenance, confidence, salience, privacy, time, optional deadline, optional structured claim, and correction history.
+
+At recall time, a **resonance wave** scores traces through lexical cues, tags, recency, salience, confidence, provenance, and prospective urgency. Redundant traces are suppressed. The recall “path” emerges for the current goal rather than being stored forever as graph edges.
+
+Read [Memory](docs/MEMORY.md) and [Cognitive Kernel](docs/COGNITIVE_KERNEL.md).
+
+## Human-inspired, not brain cosplay
+
+Hikmah borrows testable principles from memory research: selective consolidation, replay, temporal structure, reconsolidation-like correction, bounded attention, and prospective memory. Biology inspires mechanisms; it does not prove them. Sources and limitations live in [Research Notes](docs/RESEARCH.md).
+
+## Rust kernel
+
+```bash
+cargo run -p hikmah-kernel -- validate --root .
+cargo run -p hikmah-kernel -- init
+cargo run -p hikmah-kernel -- remember \
+  --kind observation \
+  --content "Migration failed because the lock timed out" \
+  --tag database --tag deployment --verified
+cargo run -p hikmah-kernel -- recall --query "why did the deployment fail"
+cargo run -p hikmah-kernel -- consolidate
+cargo run -p hikmah-kernel -- commitments --within-hours 168
+```
+
+A non-neural symbolic plan and a structured decision frame can be evaluated with:
+
+```bash
+cargo run -p hikmah-kernel -- plan --problem examples/plan-problem.json
+```
+
+Then:
+
+```bash
+cargo run -p hikmah-kernel -- decide --frame examples/decision-frame.json
+```
+
+The kernel also exposes a narrow `ProposalEngine` trait so neural, symbolic, search-based, state-space, or future architectures can be benchmarked behind the same cognitive contract.
+
+## Playbooks
+
+- [Remember → Recall → Consolidate](playbooks/remember-recall-consolidate.md)
+- [Parallel Deliberation](playbooks/parallel-deliberation.md)
+- [Error → Durable Learning](playbooks/error-to-learning.md)
+
+## Lenses
+
+- [Memory Integrity](lenses/memory-integrity.md)
+- [Model Independence](lenses/model-independence.md)
+- [Human Memory Inspiration](lenses/human-memory-inspiration.md)
 
 ## Design doctrine
 
-1. **Evidence before confidence.** Consequential claims need proportionate checking.
-2. **Justice and trust are decision gates.** Optimize without quietly transferring unfair cost or breaking commitments.
-3. **Uncertainty is data.** Mark verified evidence, inference, and unknowns separately.
-4. **Human accountability remains named.** AI may assist judgment; it does not inherit moral or professional responsibility.
-5. **Action beats framework theater.** Every framework should change a choice, control, or deliverable.
-6. **Durability beats generation volume.** Judge work by downstream usefulness and rework avoided.
-7. **Consult knowledge before improvising.** Current primary sources and qualified specialists outrank confident memory.
+1. Evidence before confidence.
+2. Memory is typed, scoped, provenance-bearing state, not hidden chain-of-thought.
+3. Corrections supersede; contradictions remain visible.
+4. Models propose; durable state transitions are gated.
+5. Human-impact, privacy, and hard safety constraints cannot be averaged away by a high score.
+6. Parallel challenge beats one model grading itself.
+7. Outcomes teach more than plans.
+8. Unknown is a valid serialized state.
+9. Novel architecture must beat a measurable baseline, not merely sound futuristic.
+10. Never claim a perfect general engine; build a perfectibility loop where failures become tests and controls.
 
-## Install / test
+## Install as skills/plugin
 
 ### ChatGPT + Codex
-
-The repository includes the required `.codex-plugin/plugin.json` plus a repo-scoped marketplace file for development.
 
 ```bash
 codex plugin marketplace add CodeWithJuber/hikmah-stack
 ```
-
-Public-directory publication is a separate OpenAI review/submission step after repository release.
 
 ### Claude Code
 
@@ -65,54 +120,27 @@ Public-directory publication is a separate OpenAI review/submission step after r
 /reload-plugins
 ```
 
-Local development:
+### Other skill-aware agents
 
-```bash
-claude --plugin-dir .
-```
-
-### Other Agent Skills clients
-
-Copy the desired folder from `skills/` into your agent's supported skills directory, or use the repository as a source if the host supports Git-backed skills. The skill content intentionally avoids depending on Claude-specific tool names.
-
-## Example requests
-
-- “Use Decision Forge to compare these three architecture options.”
-- “Run Agent Radar on this coding session and tell me why it keeps looping.”
-- “Apply Ship Guard before I call this migration production-ready.”
-- “Use Operator Core for this team conflict, but separate values from facts.”
-- “Use Hikmah Orchestrator across this entire situation and give me a single action plan.”
-
-## Safety boundaries
-
-Hikmah Stack is decision-support infrastructure, not a substitute for current medical, legal, financial, security, religious, or other qualified professional guidance. Higher stakes require stronger evidence and appropriate human review. The project does not claim its principles are infallible, and it must not label a claim “verified” merely because a model generated it.
+Use the folders under `skills/` as the portable layer. Host-specific adapters remain thin by design.
 
 ## Repository map
 
 ```text
-.codex-plugin/             OpenAI ChatGPT/Codex manifest
-.claude-plugin/            Claude Code manifest + marketplace
-.agents/plugins/           OpenAI repo marketplace for local testing
-skills/                    Portable capability core
-agents/                    Claude-specific subagent adapter
-hooks/                     Claude prompt hook + Codex command hook
-scripts/                   Validation tooling
-docs/                      Architecture, compatibility, ethics, evidence
-.github/                    CI and contribution templates
+skills/                     portable judgment/cognition skills
+runtime/hikmah-kernel/      deterministic Rust co-model runtime
+playbooks/                  operational cognitive loops
+lenses/                     reusable diagnostic perspectives
+docs/                       architecture, memory, co-model, research, ethics, evaluation
+hooks/                      host completion hooks; Rust-first Truth Gate
+.codex-plugin/              OpenAI adapter
+.claude-plugin/             Claude Code adapter
+.github/                    CI and open-source workflows
 ```
 
-## Validate
+## Safety / privacy
 
-```bash
-python3 scripts/validate.py
-python3 hooks/truth_gate.py <<<'{"stop_hook_active":false,"last_assistant_message":"Done. TODO: upload it later."}'
-```
-
-CI runs the same structural checks on every push and pull request.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md), [GOVERNANCE.md](GOVERNANCE.md), and [SECURITY.md](SECURITY.md). New empirical claims belong in [docs/EVIDENCE.md](docs/EVIDENCE.md) with date, source, scope, and limitations.
+Hikmah is decision-support infrastructure, not a substitute for current qualified medical, legal, financial, security, religious, or other professional judgment. The reference ledger refuses `sensitive` persistence by default. Production deployments needing sensitive durable memory should add an encrypted, deletion-capable vault rather than pretending an append-only log satisfies every privacy requirement.
 
 ## License
 

@@ -1,0 +1,25 @@
+{
+  "question": "Which deployment path should we use?",
+  "criteria": [
+    {"id": "safety", "weight": 0.4, "description": "Operational safety"},
+    {"id": "reversibility", "weight": 0.25, "description": "Ease of rollback"},
+    {"id": "speed", "weight": 0.15, "description": "Time to value"},
+    {"id": "cost", "weight": 0.2, "description": "Total cost"}
+  ],
+  "options": [
+    {
+      "name": "canary",
+      "scores": {"safety": 0.95, "reversibility": 0.95, "speed": 0.65, "cost": 0.7},
+      "evidence_confidence": 0.9,
+      "hard_blocks": [],
+      "reversible": true
+    },
+    {
+      "name": "big-bang",
+      "scores": {"safety": 0.45, "reversibility": 0.3, "speed": 0.95, "cost": 0.8},
+      "evidence_confidence": 0.75,
+      "hard_blocks": [],
+      "reversible": false
+    }
+  ]
+}

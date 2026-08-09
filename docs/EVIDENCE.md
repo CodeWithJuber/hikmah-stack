@@ -39,3 +39,7 @@ When adding a statistic:
 3. State at least one limitation or non-generalization.
 4. Never turn a dated measurement into a universal law.
 5. Re-check time-sensitive claims before a release.
+
+## Cognitive architecture research
+
+Human-memory and alternative-model research used to motivate TraceWeave design is maintained separately in [RESEARCH.md](RESEARCH.md), with explicit engineering lessons and limitations.
