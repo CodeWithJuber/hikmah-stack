@@ -1,0 +1,30 @@
+{
+  "$schema": "https://catalog.msh.team/schemas/kimi.plugin.schema.json",
+  "name": "hikmah-stack",
+  "version": "3.0.0",
+  "description": "Judgment and cognitive infrastructure for agentic AI: portable skills plus a deterministic Rust co-model kernel for memory, decisions, verification, and durable learning.",
+  "keywords": [
+    "agent-skills",
+    "decision-making",
+    "ai-oversight",
+    "judgment",
+    "verification",
+    "strategy",
+    "ethics",
+    "memory",
+    "orchestration"
+  ],
+  "author": "Juber Shaikh",
+  "homepage": "https://github.com/CodeWithJuber/hikmah-stack",
+  "license": "MIT",
+  "skills": "./skills/",
+  "skillInstructions": "Hikmah Stack ships six skills. Route by problem shape: use hikmah-orchestrator when a situation spans several lenses and needs one synthesized plan; operator-core for human judgment, leadership, ethics, communication and recovery; agent-radar to diagnose AI failure modes (hallucination, loops, sycophancy, slop, opacity, cost, memory failures); decision-forge for consequential choices under uncertainty (options, evidence coverage, reversibility, commitments); ship-guard before declaring any work complete (acceptance criteria, verification evidence, rollback, handoff); cognitive-kernel when state must persist across turns, sessions, or models with provenance and contradiction handling. Load the minimum useful skills, separate evidence from inference, and never label a claim verified unless it was actually checked.",
+  "interface": {
+    "displayName": "Hikmah Stack",
+    "shortDescription": "Judgment infrastructure for agentic AI",
+    "longDescription": "Six portable skills plus a deterministic Rust cognitive kernel for human judgment, AI failure diagnosis, TraceWeave memory, structured decisions, delivery verification, and cross-skill orchestration.",
+    "developerName": "Juber Shaikh",
+    "websiteURL": "https://github.com/CodeWithJuber/hikmah-stack",
+    "category": "PRODUCTIVITY"
+  }
+}

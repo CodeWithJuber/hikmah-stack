@@ -1,6 +1,11 @@
 
 # Changelog
 
+## Unreleased
+
+### Host adapters
+- Added **Kimi plugin adapter**: root `kimi.plugin.json` manifest exposing all six skills under the `hikmah-stack:*` namespace, with routing guidance for the host. No changes to the existing OpenAI/Codex or Claude Code adapters.
+
 ## 3.0.0 - 2026-08-09
 
 ### Cognitive architecture

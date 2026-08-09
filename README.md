@@ -120,6 +120,10 @@ codex plugin marketplace add CodeWithJuber/hikmah-stack
 /reload-plugins
 ```
 
+### Kimi
+
+The repository root carries `kimi.plugin.json`, so the repo itself is a valid Kimi plugin bundle: all six skills load under the `hikmah-stack:*` namespace with routing guidance from the manifest's `skillInstructions`. Install by adding this repository as a Kimi plugin, or pack the directory into `bundle.zip` for the catalog flow.
+
 ### Other skill-aware agents
 
 Use the folders under `skills/` as the portable layer. Host-specific adapters remain thin by design.
@@ -135,6 +139,7 @@ docs/                       architecture, memory, co-model, research, ethics, ev
 hooks/                      host completion hooks; Rust-first Truth Gate
 .codex-plugin/              OpenAI adapter
 .claude-plugin/             Claude Code adapter
+kimi.plugin.json            Kimi adapter (repo root doubles as plugin bundle)
 .github/                    CI and open-source workflows
 ```
 
