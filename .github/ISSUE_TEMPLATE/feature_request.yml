@@ -1,0 +1,22 @@
+name: Feature request
+description: Propose a focused improvement to a skill, agent, hook, or reference
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: failure-mode
+    attributes:
+      label: What failure mode or user need does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or examples
+      description: Link primary sources for empirical claims when possible.

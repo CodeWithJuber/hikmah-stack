@@ -1,0 +1,21 @@
+{
+  "name": "hikmah-stack",
+  "version": "2.0.0",
+  "description": "Judgment infrastructure for agentic AI: decision quality, failure-mode diagnosis, evidence discipline, and durable delivery.",
+  "author": {
+    "name": "Juber Shaikh"
+  },
+  "homepage": "https://github.com/CodeWithJuber/hikmah-stack",
+  "repository": "https://github.com/CodeWithJuber/hikmah-stack",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "decision-making",
+    "ai-oversight",
+    "judgment",
+    "leadership",
+    "verification",
+    "strategy",
+    "ethics"
+  ]
+}

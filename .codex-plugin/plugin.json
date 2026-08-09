@@ -1,0 +1,39 @@
+{
+  "name": "hikmah-stack",
+  "version": "2.0.0",
+  "description": "Judgment infrastructure for agentic AI: portable skills for decisions, AI failure diagnosis, evidence discipline, and durable delivery.",
+  "author": {
+    "name": "Juber Shaikh",
+    "url": "https://github.com/CodeWithJuber"
+  },
+  "homepage": "https://github.com/CodeWithJuber/hikmah-stack",
+  "repository": "https://github.com/CodeWithJuber/hikmah-stack",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "decision-making",
+    "ai-oversight",
+    "judgment",
+    "verification",
+    "strategy",
+    "ethics"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/codex.json",
+  "interface": {
+    "displayName": "Hikmah Stack",
+    "shortDescription": "Judgment infrastructure for agentic AI",
+    "longDescription": "Five portable skills for human judgment, AI failure-mode diagnosis, structured decisions, delivery verification, and cross-skill orchestration.",
+    "developerName": "Juber Shaikh",
+    "category": "Productivity",
+    "capabilities": [
+      "Reasoning",
+      "Workflow"
+    ],
+    "websiteURL": "https://github.com/CodeWithJuber/hikmah-stack",
+    "defaultPrompt": [
+      "Use Hikmah Stack to structure this decision and expose uncertainty.",
+      "Use Agent Radar and Ship Guard to diagnose why this AI workflow keeps failing."
+    ]
+  }
+}

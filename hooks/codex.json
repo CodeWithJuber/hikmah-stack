@@ -1,0 +1,17 @@
+{
+  "description": "Hikmah Stack completion hygiene gate for Codex.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${PLUGIN_ROOT}/hooks/truth_gate.py",
+            "timeout": 5,
+            "statusMessage": "Running Hikmah Truth Gate"
+          }
+        ]
+      }
+    ]
+  }
+}
