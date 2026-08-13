@@ -43,3 +43,34 @@ When adding a statistic:
 ## Cognitive architecture research
 
 Human-memory and alternative-model research used to motivate TraceWeave design is maintained separately in [RESEARCH.md](RESEARCH.md), with explicit engineering lessons and limitations.
+
+## Staleness updates (audited 2026-08-13)
+
+Applying rule 5 of the maintenance rule above ("re-check time-sensitive claims before a release").
+
+### Package hallucination — denominator footnote and a 2026 replication
+
+The 5.2% / 21.7% figures above are at the **code-sample** level (576,000 generated samples). The same
+Spracklen et al. study also reports a **package-mention** level aggregate: those samples contained
+2.23 million package recommendations, of which 440,445 (**19.7%**) were hallucinated, with 205,474
+unique fabricated names. A separate sub-experiment (500 prompts x 10 reruns) found 43% of hallucinated
+names recurred in all ten reruns — the property that makes slopsquatting farmable. Both framings are
+correct; cite the denominator you mean.
+
+An independent 2026 replication on five frontier models (Claude Sonnet 4.6, Claude Haiku 4.5,
+GPT-5.4-mini, Gemini 2.5 Pro, DeepSeek V3.2) reports overall rates compressed to **4.62%-6.10%**.
+
+Source: https://arxiv.org/abs/2605.17062
+
+**Use carefully:** that replication is a **single-author, non-peer-reviewed preprint** whose author
+flags an uncontrolled training-data-contamination confound. Treat it as a caution against reusing the
+2024-cohort percentages as current, not as a settled replacement. The durable rule is unchanged:
+verify package existence and provenance before installation.
+
+### AI-hallucinated citations in court decisions
+
+Databases tracking court decisions involving AI-hallucinated citations are **continuously updated**, so
+any hardcoded count is stale by construction. A direct check on 2026-08-13 returned 1,870 cases.
+Always state the count with the date you checked it, or cite the tracker without a number.
+
+Source: https://www.damiencharlotin.com/hallucinations/

@@ -4,6 +4,12 @@
       {
         "hooks": [
           {
+            "type": "command",
+            "command": "sh ${CLAUDE_PLUGIN_ROOT}/hooks/truth_gate.sh",
+            "timeout": 8,
+            "statusMessage": "Running Hikmah Truth Gate (deterministic)"
+          },
+          {
             "type": "prompt",
             "timeout": 20,
             "prompt": "You are Truth Gate, a narrow final quality check for Hikmah Stack. Review the user request and last assistant response in $ARGUMENTS. Return {\"ok\": true} unless there is a material failure: a requested deliverable is clearly missing; a consequential factual, citation, test, or completion claim is presented as verified without support when verification was expected or available; important uncertainty is hidden; or the response says work is complete while the promised artifact/result is absent. Do not block creative, conversational, brainstorming, or subjective work merely for lacking citations. If blocking, return {\"ok\": false, \"reason\": \"one concise actionable correction\"}."
