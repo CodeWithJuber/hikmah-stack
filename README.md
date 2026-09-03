@@ -22,7 +22,7 @@ The table below separates executable evidence from architectural intent.
 | Contradiction-aware structured claims | [Conflict detection](runtime/hikmah-kernel/src/claims.rs) and [integration test](runtime/hikmah-kernel/tests/traceweave.rs#L40-L56) | Implemented and tested |
 | Contextual bounded recall using lexical, tag, recency, salience, confidence, provenance, and deadline signals | [Recall scoring and redundancy suppression](runtime/hikmah-kernel/src/recall.rs#L46-L151) and [persistence/recall test](runtime/hikmah-kernel/tests/traceweave.rs#L16-L38) | Implemented and tested |
 | Evidence-preserving consolidation proposals | [`consolidation_proposals`](runtime/hikmah-kernel/src/consolidation.rs#L19-L84) | Implemented; no automatic promotion |
-| Prospective commitment recall | [`commitments_due`](runtime/hikmah-kernel/src/prospective.rs#L13-L34) | Implemented |
+| Prospective commitment recall | [`commitments_due`](runtime/hikmah-kernel/src/prospective.rs#L13-L33) | Implemented |
 | Bounded symbolic planning | [Planner](runtime/hikmah-kernel/src/planner.rs#L33-L101) and [integration test](runtime/hikmah-kernel/tests/planner.rs) | Implemented and tested |
 | Evidence-adjusted decision ranking with hard blocks and reversibility | [Decision evaluator](runtime/hikmah-kernel/src/decision.rs#L48-L118) and [example frame](examples/decision-frame.json) | Implemented with a runnable example |
 | Independent evidence, memory, risk, human-impact, and delivery checks | [`deliberate`](runtime/hikmah-kernel/src/council.rs#L36-L91) | Implemented as deterministic concurrent checks; not LLM agents |
@@ -174,21 +174,22 @@ The read-only Claude adapter declares a small set of host-provided repository to
 
 ### ChatGPT and Codex
 
+Register the repository as a marketplace source:
+
 ```bash
 codex plugin marketplace add CodeWithJuber/hikmah-stack
 ```
 
-The included Codex manifest references the portable skills and the command-based completion hook.
+This command adds the catalog source; install and test the plugin from the ChatGPT desktop app's Plugins Directory. The included Codex manifest references the portable skills and the command-based completion hook.
 
 ### Claude Code
 
 ```text
 /plugin marketplace add CodeWithJuber/hikmah-stack
 /plugin install hikmah-stack@hikmah-stack
-/reload-plugins
 ```
 
-The repository also includes a read-only Claude orchestrator adapter and a deterministic-plus-prompt completion check.
+If the install summary asks you to activate the plugin, run `/reload-plugins`. The repository also includes a read-only Claude orchestrator adapter and a deterministic-plus-prompt completion check.
 
 ### Kimi
 
