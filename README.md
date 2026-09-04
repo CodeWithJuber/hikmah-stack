@@ -195,6 +195,20 @@ If the install summary asks you to activate the plugin, run `/reload-plugins`. T
 
 The root [`kimi.plugin.json`](kimi.plugin.json) points to `./skills/` and supplies routing guidance through `skillInstructions`. Add the repository as a Kimi plugin, or package the repository for the relevant catalog flow.
 
+### OpenClaw
+
+OpenClaw can install this repository as a Codex-compatible bundle; no separate native plugin is required for the portable skills:
+
+```bash
+openclaw plugins install git:github.com/CodeWithJuber/hikmah-stack --accept-capabilities
+openclaw plugins inspect hikmah-stack
+openclaw gateway restart
+```
+
+The bundle exposes the six directories under `skills/` as normal OpenClaw skills. Verify them after restart with `openclaw skills list` or `openclaw skills check`.
+
+This integration is skills-only at runtime. OpenClaw detects the Codex hook declaration, but `hooks/codex.json` is not an OpenClaw `HOOK.md` plus `handler.ts`/`handler.js` hook pack, so OpenClaw does not execute it. The Rust kernel also remains a separate local CLI/library; installing the bundle does not register kernel tools, an MCP server, or a model provider.
+
 ### Other skill-aware hosts
 
 Reuse the required directories under `skills/`. Keep host-specific adapters thin and review executable hooks before enabling them.
