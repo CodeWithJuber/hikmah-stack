@@ -1,0 +1,19 @@
+{
+  "state": "Canary deploy: rolls out to 5% of traffic, automatic rollback on error-rate alarms, takes 40 minutes.",
+  "questions": [
+    {"id": "irreversible", "instructions": "Is this plan irreversible?", "type": "noul"},
+    {
+      "id": "safety",
+      "instructions": "How operationally safe is this plan?",
+      "type": "score",
+      "levels": ["very unsafe", "unsafe", "neutral", "safe", "very safe"],
+      "family": "deploy.safety"
+    },
+    {
+      "id": "review",
+      "instructions": "Which review does this change need?",
+      "type": "choice",
+      "options": {"light": "One reviewer", "heavy": "Change advisory board"}
+    }
+  ]
+}

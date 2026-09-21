@@ -15,14 +15,15 @@ Hikmah Stack 3 uses a **portable skills + deterministic cognitive kernel + thin 
 - contextual multi-channel recall and redundancy suppression;
 - commitment/deadline recall;
 - deterministic decision scoring with evidence coverage;
-- parallel evidence/memory/risk/human-impact/delivery lanes;
+- deterministic evidence/memory/risk/human-impact/delivery lanes (risk and human impact veto on one item);
 - completion hygiene hook;
 - repository validation;
-- model-agnostic `ProposalEngine` interface.
+- model-agnostic `ProposalEngine` (text) and `DecisionEngine` (typed) interfaces;
+- outcome write-back and calibration of recorded predictions.
 
-## Layer 3: proposal engines
+## Layer 3: proposal and decision engines
 
-A proposal engine is optional. It may be a frontier API model, small local model, retrieval+rules system, state-space model, symbolic search engine, or a future architecture. It cannot directly become durable truth merely by returning text.
+Engines are optional. A proposal engine returns text; a decision engine (see [Typed Decision Port](DECISION_PORT.md)) returns typed answers with probabilities. Either may be a frontier API model, a System One model such as TypeSafe's Jev, a small local model, a retrieval+rules system, a symbolic search engine, or a future architecture. Neither becomes durable truth by returning output: typed answers are admitted only after validation against the questions asked, and are stored as unverified `prediction` traces.
 
 ## Layer 4: host adapters
 
@@ -33,7 +34,7 @@ A proposal engine is optional. It may be a frontier API model, small local model
 
 ## Rust-first Truth Gate
 
-The primary completion gate is `hikmah hook`. `hooks/truth_gate.sh` resolves an installed Hikmah binary first, then a local Rust toolchain. A small Python implementation remains only as a zero-install compatibility fallback so a source-installed plugin does not lose its completion hygiene on machines where the binary is not yet installed.
+The primary completion gate is `hikmah hook`. `hooks/truth_gate.sh` runs the plugin's `bin/hikmah`, then a `hikmah` on PATH, then the Python fallback, and finally allows. It checks each candidate's output and always exits 0 with JSON, so a stale or broken binary can neither block a turn nor loop the host. It never compiles code at stop time, because cargo and rustup read configuration from the user's project directory. Rust and Python are tested against the same golden cases (`hooks/truth_gate_cases.json`). With `HIKMAH_HOOK_ENGINE=jev`, the Rust gate asks Jev one yes/no question and falls back to the deterministic rules on any engine problem.
 
 ## No forced graph/vector database
 

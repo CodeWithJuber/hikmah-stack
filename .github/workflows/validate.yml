@@ -17,11 +17,19 @@ jobs:
           components: rustfmt, clippy
       - name: Rust format
         run: cargo fmt --check
-      - name: Rust lint
+      - name: Rust lint (default features, includes the Jev adapter)
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Rust lint (no network code)
+        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
       - name: Rust tests
         run: cargo test --workspace
       - name: Validate Hikmah package
         run: cargo run -p hikmah-kernel -- validate --root .
-      - name: Compile Python compatibility fallback
-        run: python3 -m py_compile hooks/truth_gate.py
+      - name: Python Truth Gate fallback (golden cases shared with Rust)
+        run: python3 hooks/test_truth_gate.py
+      - name: Hook launcher always answers with JSON and exit 0
+        run: |
+          out="$(printf '{"last_assistant_message":"Done. TODO: tests"}' | CLAUDE_PLUGIN_ROOT="$PWD" PATH=/usr/bin:/bin sh hooks/truth_gate.sh)"
+          echo "$out" | python3 -c 'import json,sys; assert json.load(sys.stdin)["decision"] == "block"'
+          out="$(printf 'not json' | CLAUDE_PLUGIN_ROOT=/nonexistent PATH=/usr/bin:/bin sh hooks/truth_gate.sh)"
+          test "$out" = "{}"

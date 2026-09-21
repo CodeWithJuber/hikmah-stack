@@ -12,6 +12,8 @@ pub enum KernelError {
     Invalid(String),
     #[error("trace not found: {0}")]
     NotFound(String),
+    #[error("decision engine error: {0}")]
+    Engine(String),
 }
 
 pub type Result<T> = std::result::Result<T, KernelError>;

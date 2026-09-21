@@ -30,7 +30,7 @@ SENSE -> ENCODE -> RECALL -> DELIBERATE -> DECIDE -> ACT -> VERIFY -> CONSOLIDAT
             +-------------------- outcome / correction ----------------+
 ```
 
-Each transition produces inspectable artifacts. The kernel does not need a model to maintain this cycle. A model can be attached through `ProposalEngine`, but its output enters as untrusted proposals.
+Each transition produces inspectable artifacts. The kernel does not need a model to maintain this cycle. A model can be attached through `ProposalEngine` (text) or `DecisionEngine` (typed; see [DECISION_PORT.md](DECISION_PORT.md)), but its output enters as untrusted proposals: typed answers are validated all-or-nothing against the questions asked and stored only as unverified predictions until an outcome from a non-model principal resolves them.
 
 ## The six subsystems
 

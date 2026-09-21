@@ -3,7 +3,7 @@ name: ship-guard
 description: >
   Use when building with AI agents, reviewing an implementation plan, defining acceptance criteria, preventing false completion claims, improving delivery discipline, reducing rework, or designing verification, logging, rollback, and handoff practices.
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   source: "Hikmah Stack Ship Guard"
 ---
 

@@ -3,7 +3,7 @@ name: operator-core
 description: >
   Use for judgment, leadership, discipline, communication, pressure, recovery, ethics, stewardship, personal effectiveness, or broad life/work operating principles. Apply durable principles without pretending they replace current domain evidence or professional advice.
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   source: "Hikmah Stack Operator Core"
 ---
 

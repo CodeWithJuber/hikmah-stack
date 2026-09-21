@@ -38,3 +38,14 @@ There is no “perfect engine” claim in Hikmah Stack. There is a **perfectibil
 ## Architecture bake-off
 
 Any future local model must be tested behind the same `ProposalEngine` boundary. Compare candidate architectures on task quality **and** downstream repair, verification, memory pollution, latency, energy, and operator trust. A model that writes beautiful prose but causes more incorrect durable memories loses.
+
+## Measurable now (3.1.0)
+
+These run without new infrastructure:
+
+- **Truth Gate:** false-block and false-pass rate on `hooks/truth_gate_cases.json` (rules), and on your own labeled transcripts with `HIKMAH_HOOK_ENGINE=jev` at a chosen threshold. The shipped golden cases are author-written regression tests, not evidence of field accuracy.
+- **Engine calibration:** `hikmah ask --record` stores predictions; `hikmah outcome` stores what happened; `hikmah calibration` reports Brier score, the Brier of a base-rate predictor, ECE over 5 equal-width bins, and the observed rate per engine and question family. A family is reported as calibrated only after 50 resolved predictions.
+- **Memory:** stale-belief activation after supersession, duplicate folding, relevance gating, and sensitive-persistence behavior are covered by integration tests (`runtime/hikmah-kernel/tests/`).
+- **Ledger:** tamper, truncation (head file), torn tail, legacy format, and concurrent writers are covered by tests; replay time can be measured with `hikmah verify-ledger` on a large store.
+
+Still not measurable without new data: recall precision@k on a labeled corpus, and provenance retention across consolidation.

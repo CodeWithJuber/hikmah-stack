@@ -68,7 +68,7 @@ A correction should not mutate yesterday's record in place. The system writes a 
 
 Human forgetting is not equivalent to deleting a row. Hikmah separates:
 
-1. **accessibility decay:** older, low-salience traces receive less recall weight;
+1. **accessibility decay:** older, low-salience traces receive less recall weight among relevant results (metadata scales relevance; it never makes an irrelevant trace recallable);
 2. **supersession:** old beliefs stop being active when replaced;
 3. **retention deletion:** privacy/legal deletion is a storage operation, not a cognitive heuristic.
 
@@ -76,7 +76,7 @@ The current append-only reference ledger deliberately refuses `sensitive` persis
 
 ## Working memory: Focus Capsule
 
-The policy defines a bounded working-set limit. The agent should deliberate over the smallest set of traces that changes the decision. More context is not automatically more cognition.
+The recall limit bounds the working set (the policy's `working_set_limit` is reserved for a future Focus Capsule API and is not yet enforced). The agent should deliberate over the smallest set of traces that changes the decision. More context is not automatically more cognition.
 
 ## Prospective memory: Promise Queue
 
@@ -92,4 +92,5 @@ Before durable memory writes:
 - quarantine contradictory or suspicious claims rather than overwriting;
 - never persist secrets merely because they appeared in conversation;
 - scope preferences to the person/project/context that supplied them;
-- attach outcomes to prior actions so failed plans do not become success-pattern memories.
+- attach outcomes to prior actions so failed plans do not become success-pattern memories (`hikmah outcome` links an observed outcome to a recorded prediction);
+- never let model output verify itself: `model:` sources cannot be verified, cannot supersede, and cannot resolve predictions.

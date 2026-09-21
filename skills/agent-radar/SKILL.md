@@ -3,7 +3,7 @@ name: agent-radar
 description: >
   Use to diagnose AI-agent failure modes such as hallucination, looping, sycophancy, context loss, over-building, brittle automation, slop, hidden uncertainty, black-box behavior, cost leakage, or misplaced trust. Convert diagnosis into concrete controls and tests.
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   source: "Hikmah Stack Agent Radar"
 ---
 
