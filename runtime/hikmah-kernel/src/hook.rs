@@ -21,8 +21,9 @@
 use crate::decision_port::{ask, DecisionEngine, DecisionRequest, Question, QuestionKind};
 use crate::error::Result;
 use regex::Regex;
+use serde::Serialize;
 use serde_json::{json, Value};
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::sync::OnceLock;
 use unicode_normalization::UnicodeNormalization;
 
@@ -259,37 +260,131 @@ pub fn run_stop_hook_with(
         return Ok(());
     }
 
-    if let Some(engine) = engine {
-        if let Some(request) = false_completion_request(message) {
-            if let Ok(decision) = ask(engine, &request) {
-                if let Some(p) = decision
-                    .answer("false_completion")
-                    .and_then(|answer| answer.p_true())
-                {
-                    if p >= threshold {
-                        let reason = format!(
+    let verdict = evaluate_message(message, engine, threshold);
+    match verdict.reason {
+        Some(reason) if verdict.block => {
+            writeln!(output, "{}", json!({"decision": "block", "reason": reason}))?
+        }
+        _ => allow(&mut output)?,
+    }
+    Ok(())
+}
+
+/// Which path produced a Truth Gate verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GatePath {
+    /// The engine answered and its probability decided.
+    Engine,
+    /// No engine was configured: the deterministic rules decided.
+    Rules,
+    /// An engine was configured but failed, abstained, or was rejected: the rules decided.
+    RulesFallback,
+}
+
+/// Full explanation of one Truth Gate decision (what `hikmah gate-explain` prints).
+#[derive(Debug, Clone, Serialize)]
+pub struct GateVerdict {
+    pub block: bool,
+    pub path: GatePath,
+    /// The deterministic rules' verdict, always computed so both can be compared.
+    pub rules_block: bool,
+    /// Engine `P(false completion)`, when the engine answered.
+    pub p: Option<f64>,
+    pub threshold: f64,
+    pub engine: Option<String>,
+    /// Why the engine gave no probability (failure, abstention, or rejection), if it did not.
+    pub engine_note: Option<String>,
+    pub engine_latency_ms: Option<u64>,
+    #[serde(skip)]
+    reason: Option<String>,
+}
+
+/// Decide one message. The Stop hook and `hikmah gate-explain` both call this, so the benchmark
+/// measures exactly the code path the hook runs.
+pub fn evaluate_message(
+    message: &str,
+    engine: Option<&dyn DecisionEngine>,
+    threshold: f64,
+) -> GateVerdict {
+    let rules_block = rules_verdict(message);
+    let mut verdict = GateVerdict {
+        block: rules_block,
+        path: GatePath::Rules,
+        rules_block,
+        p: None,
+        threshold,
+        engine: None,
+        engine_note: None,
+        engine_latency_ms: None,
+        reason: rules_block.then(|| BLOCK_REASON.to_string()),
+    };
+    let Some(engine) = engine else {
+        return verdict;
+    };
+    verdict.path = GatePath::RulesFallback;
+    verdict.engine = Some(engine.descriptor().source());
+    let Some(request) = false_completion_request(message) else {
+        verdict.engine_note = Some("message could not be turned into a request".into());
+        return verdict;
+    };
+    match ask(engine, &request) {
+        Ok(decision) => {
+            verdict.engine_latency_ms = Some(decision.latency_ms);
+            match decision
+                .answer("false_completion")
+                .and_then(|answer| answer.p_true())
+            {
+                Some(p) => {
+                    verdict.path = GatePath::Engine;
+                    verdict.p = Some(p);
+                    verdict.block = p >= threshold;
+                    verdict.reason = verdict.block.then(|| {
+                        format!(
                             "Hikmah Truth Gate ({} p={p:.2}): the response claims completion while leaving work unfinished or deferred. Resolve it or state the limitation explicitly.",
                             decision.engine.source()
-                        );
-                        writeln!(output, "{}", json!({"decision": "block", "reason": reason}))?;
-                    } else {
-                        allow(&mut output)?;
-                    }
-                    return Ok(());
+                        )
+                    });
+                }
+                None => {
+                    verdict.engine_note = Some(
+                        decision
+                            .rejected
+                            .clone()
+                            .unwrap_or_else(|| "engine abstained".into()),
+                    );
                 }
             }
         }
-        // Engine unavailable, abstained, or rejected: fall through to the deterministic rules.
+        // Engine unavailable or the request was refused: keep the rules' verdict.
+        Err(error) => verdict.engine_note = Some(error.to_string()),
     }
+    verdict
+}
 
-    if rules_verdict(message) {
-        writeln!(
-            output,
-            "{}",
-            json!({"decision": "block", "reason": BLOCK_REASON})
-        )?;
-    } else {
-        allow(&mut output)?;
+/// `hikmah gate-explain --batch`: one JSON object per input line
+/// (`{"id": ..., "last_assistant_message": ...}`), one verdict per output line, input order kept.
+pub fn explain_batch(
+    input: impl BufRead,
+    mut output: impl Write,
+    engine: Option<&dyn DecisionEngine>,
+    threshold: f64,
+) -> Result<()> {
+    for line in input.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let item = parse_payload(&line);
+        let id = item.get("id").cloned().unwrap_or(Value::Null);
+        let message = item
+            .get("last_assistant_message")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let verdict = evaluate_message(message, engine, threshold);
+        let mut row = serde_json::to_value(&verdict)?;
+        row["id"] = id;
+        writeln!(output, "{row}")?;
     }
     Ok(())
 }
@@ -313,6 +408,58 @@ mod tests {
         ] {
             assert!(!rules_verdict(message), "should allow: {message}");
         }
+    }
+
+    #[test]
+    fn explain_reports_rules_and_engine_paths() {
+        use crate::decision_port::{EngineDescriptor, RawAnswer, StaticEngine};
+        let message = "Done. TODO: add tests";
+        let rules = evaluate_message(message, None, 0.8);
+        assert!(rules.block && rules.rules_block && rules.path == GatePath::Rules);
+
+        let low = StaticEngine {
+            descriptor: EngineDescriptor {
+                name: "static".into(),
+                version: "1".into(),
+            },
+            answers: [(
+                "false_completion".to_string(),
+                RawAnswer::Noul { noul: 0.3 },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let verdict = evaluate_message(message, Some(&low), 0.8);
+        assert_eq!(verdict.path, GatePath::Engine);
+        assert_eq!(verdict.p, Some(0.3));
+        assert!(
+            !verdict.block,
+            "engine decides even when the rules would block"
+        );
+        assert!(verdict.rules_block);
+
+        let failing = crate::decision_port::NoEngine;
+        let fallback = evaluate_message(message, Some(&failing), 0.8);
+        assert_eq!(fallback.path, GatePath::RulesFallback);
+        assert!(fallback.block && fallback.engine_note.is_some());
+    }
+
+    #[test]
+    fn explain_batch_keeps_ids_and_order() {
+        let input = "{\"id\":\"a\",\"last_assistant_message\":\"Done. TODO: tests\"}\n\n{\"id\":7,\"last_assistant_message\":\"Fixed and tested.\"}\n";
+        let mut out = Vec::new();
+        explain_batch(input.as_bytes(), &mut out, None, 0.8).unwrap();
+        let rows: Vec<Value> = String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], "a");
+        assert_eq!(rows[0]["block"], true);
+        assert_eq!(rows[1]["id"], 7);
+        assert_eq!(rows[1]["block"], false);
+        assert_eq!(rows[1]["path"], "rules");
     }
 
     #[test]

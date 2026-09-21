@@ -4,7 +4,9 @@ use hikmah_kernel::decision::{evaluate, DecisionFrame};
 use hikmah_kernel::decision_port::{
     ask, DecisionEngine, DecisionRequest, NoEngine, Question, QuestionKind,
 };
-use hikmah_kernel::hook::{run_stop_hook_with, DEFAULT_ENGINE_THRESHOLD};
+use hikmah_kernel::hook::{
+    evaluate_message, explain_batch, run_stop_hook_with, DEFAULT_ENGINE_THRESHOLD,
+};
 use hikmah_kernel::planner::{plan, PlanProblem};
 use hikmah_kernel::policy::KernelPolicy;
 use hikmah_kernel::recall::RecallQuery;
@@ -183,6 +185,12 @@ enum Command {
     /// Truth Gate Stop hook. Engine via HIKMAH_HOOK_ENGINE=jev (needs TYPESAFE_API_KEY);
     /// threshold via HIKMAH_HOOK_THRESHOLD (default 0.8).
     Hook,
+    /// Explain the Truth Gate decision (rules verdict, engine probability, path) for a stop event
+    /// on stdin, or for JSON lines with `--batch`. Same engine settings and code path as `hook`.
+    GateExplain {
+        #[arg(long)]
+        batch: bool,
+    },
     Validate {
         #[arg(long, default_value = ".")]
         root: PathBuf,
@@ -227,6 +235,23 @@ fn jev_engine(timeout_ms: Option<u64>) -> Result<Box<dyn DecisionEngine>> {
         engine = engine.with_timeout(capped);
     }
     Ok(Box::new(engine))
+}
+
+/// Engine and threshold for `hook` and `gate-explain`. Configuration problems never fail closed:
+/// an unusable engine setting means rules only.
+fn hook_settings() -> (Option<Box<dyn DecisionEngine>>, f64) {
+    let engine_name = std::env::var("HIKMAH_HOOK_ENGINE").unwrap_or_default();
+    let threshold = std::env::var("HIKMAH_HOOK_THRESHOLD")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| (0.0..=1.0).contains(v))
+        .unwrap_or(DEFAULT_ENGINE_THRESHOLD);
+    let engine = if engine_name.trim().eq_ignore_ascii_case("jev") {
+        jev_engine(Some(3_000)).ok()
+    } else {
+        None
+    };
+    (engine, threshold)
 }
 
 #[cfg(not(feature = "jev"))]
@@ -417,25 +442,34 @@ fn run() -> Result<()> {
             print_json(&memory.calibration(family.as_deref()))?;
         }
         Command::Hook => {
-            let engine_name = std::env::var("HIKMAH_HOOK_ENGINE").unwrap_or_default();
-            let threshold = std::env::var("HIKMAH_HOOK_THRESHOLD")
-                .ok()
-                .and_then(|v| v.trim().parse::<f64>().ok())
-                .filter(|v| (0.0..=1.0).contains(v))
-                .unwrap_or(DEFAULT_ENGINE_THRESHOLD);
-            // The hook must never fail closed on configuration problems: fall back to rules.
-            let engine: Option<Box<dyn DecisionEngine>> =
-                if engine_name.trim().eq_ignore_ascii_case("jev") {
-                    jev_engine(Some(3_000)).ok()
-                } else {
-                    None
-                };
+            let (engine, threshold) = hook_settings();
             run_stop_hook_with(
                 io::stdin().lock(),
                 io::stdout().lock(),
                 engine.as_deref(),
                 threshold,
             )?;
+        }
+        Command::GateExplain { batch } => {
+            let (engine, threshold) = hook_settings();
+            if batch {
+                explain_batch(
+                    io::stdin().lock(),
+                    io::stdout().lock(),
+                    engine.as_deref(),
+                    threshold,
+                )?;
+            } else {
+                let mut buffer = String::new();
+                io::Read::read_to_string(&mut io::stdin().lock(), &mut buffer)?;
+                let payload: serde_json::Value =
+                    serde_json::from_str(&buffer).unwrap_or(serde_json::Value::Null);
+                let message = payload
+                    .get("last_assistant_message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                print_json(&evaluate_message(message, engine.as_deref(), threshold))?;
+            }
         }
         Command::Validate { root } => {
             let notes = validate_repo(root)?;

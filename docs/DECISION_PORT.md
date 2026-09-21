@@ -62,6 +62,11 @@ TYPESAFE_API_KEY=... hikmah decide --frame examples/decision-frame.json --engine
 
 # Truth Gate with Jev as the judge (falls back to the rules on any engine problem).
 HIKMAH_HOOK_ENGINE=jev HIKMAH_HOOK_THRESHOLD=0.8 TYPESAFE_API_KEY=... hikmah hook < stop-event.json
+
+# Same code path, explained: rules verdict, engine probability, threshold, and which path decided.
+# --batch reads {"id", "last_assistant_message"} JSON lines and writes one verdict per line.
+HIKMAH_HOOK_ENGINE=jev TYPESAFE_API_KEY=... hikmah gate-explain < stop-event.json
+hikmah gate-explain --batch < messages.jsonl
 ```
 
 Environment:
