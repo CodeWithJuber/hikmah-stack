@@ -76,7 +76,7 @@ The current append-only reference ledger deliberately refuses `sensitive` persis
 
 ## Working memory: Focus Capsule
 
-The recall limit bounds the working set (the policy's `working_set_limit` is reserved for a future Focus Capsule API and is not yet enforced). The agent should deliberate over the smallest set of traces that changes the decision. More context is not automatically more cognition.
+`recall_limit` bounds one recall. `MemoryStore::focus` starts a Focus Capsule, a working set that can absorb several recalls and holds at most `working_set_limit` traces. Pinned traces are never evicted; otherwise the lowest-activation trace leaves first. The capsule is an in-memory library view, not a CLI command or a durable state transition. The agent should deliberate over the smallest set of traces that changes the decision. More context is not automatically more cognition.
 
 ## Prospective memory: Promise Queue
 

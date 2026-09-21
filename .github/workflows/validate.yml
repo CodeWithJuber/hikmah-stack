@@ -11,9 +11,11 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Actions are pinned to commit SHAs; the comment names the ref each SHA was taken from.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - name: Rust format
         run: cargo fmt --check
@@ -33,3 +35,22 @@ jobs:
           echo "$out" | python3 -c 'import json,sys; assert json.load(sys.stdin)["decision"] == "block"'
           out="$(printf 'not json' | CLAUDE_PLUGIN_ROOT=/nonexistent PATH=/usr/bin:/bin sh hooks/truth_gate.sh)"
           test "$out" = "{}"
+
+  # The ledger's locking and torn-tail repair behave differently on Windows (mandatory locks,
+  # append-only handles cannot truncate), so the kernel tests also run there.
+  windows-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+      - name: Rust tests
+        run: cargo test --workspace
+      - name: Validate Hikmah package
+        run: cargo run -p hikmah-kernel -- validate --root .
+      - name: Hook launcher falls back to Python and still blocks
+        shell: bash
+        run: |
+          out="$(printf '{"last_assistant_message":"Done. TODO: tests"}' | CLAUDE_PLUGIN_ROOT="$PWD" sh hooks/truth_gate.sh)"
+          echo "$out" | python -c 'import json,sys; assert json.load(sys.stdin)["decision"] == "block"'

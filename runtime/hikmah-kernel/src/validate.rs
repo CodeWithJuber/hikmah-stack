@@ -193,9 +193,83 @@ pub fn validate_repo(root: impl AsRef<Path>) -> Result<Vec<String>> {
         if !skill_names.insert(name.clone()) {
             return Err(invalid(format!("duplicate skill name: {name}")));
         }
+        check_skill_links(&entry.path())?;
     }
     notes.push(format!("{} unique skills", skill_names.len()));
     Ok(notes)
+}
+
+/// Skills are installed one directory at a time, so a relative Markdown link must resolve to an
+/// existing file inside the same skill directory. Absolute URLs and in-page anchors are allowed.
+fn check_skill_links(skill_dir: &Path) -> Result<()> {
+    let mut pending = vec![skill_dir.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let text = fs::read_to_string(&path)?;
+            for target in markdown_link_targets(&text) {
+                if let Some(problem) = skill_link_problem(skill_dir, &dir, target) {
+                    return Err(invalid(format!(
+                        "{}: link `{target}` {problem}; skills must be self-contained",
+                        path.display()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn markdown_link_targets(text: &str) -> Vec<&str> {
+    let mut targets = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("](") {
+        rest = &rest[start + 2..];
+        let Some(end) = rest.find(')') else { break };
+        let target = rest[..end].split_whitespace().next().unwrap_or("");
+        targets.push(target);
+        rest = &rest[end..];
+    }
+    targets
+}
+
+fn skill_link_problem(skill_dir: &Path, file_dir: &Path, target: &str) -> Option<&'static str> {
+    let path_part = target.split('#').next().unwrap_or("");
+    if path_part.is_empty() || target.contains("://") || target.starts_with("mailto:") {
+        return None;
+    }
+    if path_part.starts_with('/') {
+        return Some("is an absolute path");
+    }
+    let base = file_dir.strip_prefix(skill_dir).ok()?;
+    let mut depth: Vec<&std::ffi::OsStr> = base.iter().collect();
+    for part in Path::new(path_part).components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if depth.pop().is_none() {
+                    return Some("escapes the skill directory");
+                }
+            }
+            std::path::Component::Normal(name) => depth.push(name),
+            _ => return Some("is not a relative path"),
+        }
+    }
+    let resolved = depth
+        .iter()
+        .fold(skill_dir.to_path_buf(), |acc, part| acc.join(part));
+    if resolved.exists() {
+        None
+    } else {
+        Some("does not resolve inside the skill directory")
+    }
 }
 
 fn field(value: &Value, key: &str) -> Result<String> {
@@ -268,4 +342,41 @@ fn parse_frontmatter_field(text: &str, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skill_links_must_stay_inside_the_skill() {
+        let skill = std::env::temp_dir().join(format!("hikmah-skill-links-{}", std::process::id()));
+        fs::create_dir_all(skill.join("references")).unwrap();
+        fs::write(skill.join("references/notes.md"), "x").unwrap();
+        let refs = skill.join("references");
+
+        assert_eq!(
+            skill_link_problem(&skill, &skill, "references/notes.md"),
+            None
+        );
+        assert_eq!(
+            skill_link_problem(&skill, &refs, "../references/notes.md#top"),
+            None
+        );
+        assert_eq!(
+            skill_link_problem(&skill, &skill, "https://example.com/a.md"),
+            None
+        );
+        assert_eq!(skill_link_problem(&skill, &skill, "#section"), None);
+        assert!(skill_link_problem(&skill, &skill, "../../docs/MEMORY.md").is_some());
+        assert!(skill_link_problem(&skill, &refs, "../../other/SKILL.md").is_some());
+        assert!(skill_link_problem(&skill, &skill, "references/missing.md").is_some());
+        assert!(skill_link_problem(&skill, &skill, "/etc/passwd").is_some());
+
+        assert_eq!(
+            markdown_link_targets("see [a](x.md \"title\") and [b](https://e.com)"),
+            vec!["x.md", "https://e.com"]
+        );
+        fs::remove_dir_all(&skill).unwrap();
+    }
 }

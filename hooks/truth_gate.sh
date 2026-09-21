@@ -21,17 +21,24 @@ try_candidate() {
   esac
 }
 
-if [ -n "$ROOT" ] && [ -x "$ROOT/bin/hikmah" ]; then
-  try_candidate "$ROOT/bin/hikmah" hook && exit 0
-fi
+for bin in "$ROOT/bin/hikmah" "$ROOT/bin/hikmah.exe"; do
+  if [ -n "$ROOT" ] && [ -x "$bin" ]; then
+    try_candidate "$bin" hook && exit 0
+  fi
+done
 
 if command -v hikmah >/dev/null 2>&1; then
   try_candidate hikmah hook && exit 0
 fi
 
 # Zero-install compatibility fallback (same rules, tested against hooks/truth_gate_cases.json).
-if [ -n "$ROOT" ] && command -v python3 >/dev/null 2>&1 && [ -f "$ROOT/hooks/truth_gate.py" ]; then
-  try_candidate python3 "$ROOT/hooks/truth_gate.py" && exit 0
+# `python3` first; `python` covers Windows, where `python3` is often a Store stub that fails.
+if [ -n "$ROOT" ] && [ -f "$ROOT/hooks/truth_gate.py" ]; then
+  for py in python3 python; do
+    if command -v "$py" >/dev/null 2>&1; then
+      try_candidate "$py" "$ROOT/hooks/truth_gate.py" && exit 0
+    fi
+  done
 fi
 
 printf '{}\n'

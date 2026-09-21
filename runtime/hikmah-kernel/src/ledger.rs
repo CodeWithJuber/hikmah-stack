@@ -8,7 +8,8 @@
 //!   any injected byte inside the payload is detected.
 //!
 //! Writes validate every event against current state *before* anything touches disk, hold an
-//! exclusive file lock, re-read records other processes appended since this store was opened,
+//! exclusive lock on a `<store>.lock` sidecar (never on the ledger itself: Windows locks are
+//! mandatory and would block lock-free readers), re-read records other processes appended since this store was opened,
 //! and write each batch with a single `write_all`. A torn final line (crash mid-write) is ignored
 //! on read and truncated by the next writer. A `<store>.head` file records the latest
 //! `{seq, hash}`: it is read before the ledger (so a concurrent writer cannot cause a false
@@ -509,12 +510,7 @@ impl MemoryStore {
         if payloads.is_empty() {
             return Ok(());
         }
-        let mut file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(&self.path)?;
-        file.lock()?;
+        let (_lock, mut file) = self.open_locked()?;
         self.sync_tail(&mut file)?;
         self.check_head_before_write()?;
         validate_batch(&self.traces, &payloads)?;
@@ -544,6 +540,7 @@ impl MemoryStore {
             });
             prev = hash;
         }
+        file.seek(SeekFrom::End(0))?;
         file.write_all(buffer.as_bytes())?;
         file.sync_data()?;
         for payload in &payloads {
@@ -579,6 +576,7 @@ impl MemoryStore {
             self.torn_tail_bytes = 0;
         }
         if self.missing_final_newline {
+            file.seek(SeekFrom::End(0))?;
             file.write_all(b"\n")?;
             self.offset += 1;
             self.missing_final_newline = false;
@@ -615,12 +613,7 @@ impl MemoryStore {
 
     /// Explicitly accept the current ledger as the new head (after a deliberate repair).
     pub fn reset_head(&mut self) -> Result<Option<LedgerHead>> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(&self.path)?;
-        file.lock()?;
+        let (_lock, mut file) = self.open_locked()?;
         self.sync_tail(&mut file)?;
         let path = self.head_path();
         if self.records.is_empty() {
@@ -632,6 +625,31 @@ impl MemoryStore {
         }
         self.write_head()?;
         Ok(self.head())
+    }
+
+    pub fn lock_path(&self) -> PathBuf {
+        let mut name = self.path.as_os_str().to_owned();
+        name.push(".lock");
+        PathBuf::from(name)
+    }
+
+    /// Take the exclusive writer lock, then open the ledger read+write. The ledger is not opened
+    /// in append mode: on Windows an append-only handle cannot `set_len` to repair a torn tail,
+    /// so every write seeks to the end explicitly while the lock is held.
+    fn open_locked(&self) -> Result<(File, File)> {
+        let lock = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.lock_path())?;
+        lock.lock()?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&self.path)?;
+        Ok((lock, file))
     }
 
     fn write_head(&mut self) -> Result<()> {
