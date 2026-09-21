@@ -148,11 +148,15 @@ pub struct PredictionRecord {
     /// Engine identity, e.g. `jev@jev-1.13.0`.
     pub engine: String,
     /// Noul: probability of `true`. Choice/score: probability of the reported value.
-    pub p: f64,
+    /// `None` when the engine reported neither a distribution nor a confidence.
+    pub p: Option<f64>,
     /// Choice option id or score level index (as text); `true`/`false` for noul.
     pub value: String,
     #[serde(default)]
     pub probabilities: std::collections::BTreeMap<String, f64>,
+    /// Every value an outcome may take (`true`/`false`, option ids, or level indices).
+    #[serde(default)]
+    pub answer_space: Vec<String>,
     /// Always false until calibration for this family is measured from outcomes.
     pub calibrated: bool,
 }
@@ -277,6 +281,70 @@ impl Trace {
         }
         Ok(())
     }
+}
+
+/// Parse a deadline: epoch milliseconds, `+<n>h`, `+<n>d`, or `YYYY-MM-DD[THH:MM[:SS]][Z]` in UTC.
+/// Impossible dates (2026-02-31), negative parts, and years outside 1970..=9999 are rejected.
+pub fn parse_deadline(value: &str, now_ms: u64) -> Result<u64> {
+    let v = value.trim();
+    let invalid = || KernelError::Invalid(format!("unrecognized deadline: {value}"));
+    if let Some(rest) = v.strip_prefix('+') {
+        let (number, unit_ms) = if let Some(n) = rest.strip_suffix('h') {
+            (n, 3_600_000_u64)
+        } else if let Some(n) = rest.strip_suffix('d') {
+            (n, 86_400_000_u64)
+        } else {
+            return Err(invalid());
+        };
+        let n: u64 = number.parse().map_err(|_| invalid())?;
+        return Ok(now_ms.saturating_add(n.saturating_mul(unit_ms)));
+    }
+    if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) {
+        return v.parse().map_err(|_| invalid());
+    }
+    let v = v.strip_suffix('Z').unwrap_or(v);
+    let (date, time) = v.split_once('T').unwrap_or((v, "00:00:00"));
+    let number = |part: &str| -> Result<u64> {
+        if part.is_empty() || !part.chars().all(|c| c.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        part.parse::<u64>().map_err(|_| invalid())
+    };
+    let d: Vec<u64> = date.split('-').map(number).collect::<Result<_>>()?;
+    let t: Vec<u64> = time.split(':').map(number).collect::<Result<_>>()?;
+    if d.len() != 3 || !(1..=3).contains(&t.len()) {
+        return Err(invalid());
+    }
+    let (y, m, day) = (d[0], d[1], d[2]);
+    let (hh, mm, ss) = (t[0], *t.get(1).unwrap_or(&0), *t.get(2).unwrap_or(&0));
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let days_in_month = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return Err(invalid()),
+    };
+    if !(1970..=9999).contains(&y)
+        || day == 0
+        || day > days_in_month
+        || hh > 23
+        || mm > 59
+        || ss > 59
+    {
+        return Err(invalid());
+    }
+    // Days from civil (Howard Hinnant's algorithm), UTC. All values are bounded above.
+    let (y, m, day) = (y as i64, m as i64, day as i64);
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let secs = days * 86_400 + (hh * 3_600 + mm * 60 + ss) as i64;
+    Ok(secs as u64 * 1_000)
 }
 
 pub fn now_ms() -> u64 {

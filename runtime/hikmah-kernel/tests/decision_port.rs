@@ -266,3 +266,113 @@ fn predictions_are_recorded_unverified_and_calibration_is_earned_from_outcomes()
     assert!(!family.calibrated);
     assert!((family.rate - 0.25).abs() < 1e-9);
 }
+
+#[test]
+fn credentials_anywhere_in_the_request_are_refused() {
+    let request = DecisionRequest {
+        state: "plain state".into(),
+        questions: vec![Question::noul(
+            "ok",
+            "Given DB_PASSWORD=hunter2hunter2, is this safe?",
+        )],
+    };
+    assert!(ask(&NoEngine, &request).is_err());
+}
+
+#[test]
+fn answers_must_agree_with_their_own_distribution() {
+    let mut not_argmax = good_answers();
+    not_argmax[1].1 = RawAnswer::Choice {
+        choice: "light".into(),
+        probabilities: Some(BTreeMap::from([
+            ("light".into(), 0.0),
+            ("heavy".into(), 1.0),
+        ])),
+        confidence: None,
+    };
+    let mut aliased = good_answers();
+    aliased[2].1 = RawAnswer::Score {
+        score: 1.0,
+        probabilities: Some(BTreeMap::from([("01".into(), 1.0)])),
+        confidence: None,
+    };
+    let mut inconsistent = good_answers();
+    inconsistent[2].1 = RawAnswer::Score {
+        score: 2.0,
+        probabilities: Some(BTreeMap::from([("0".into(), 1.0)])),
+        confidence: None,
+    };
+    for answers in [not_argmax, aliased, inconsistent] {
+        assert!(admit(&request(), raw(answers)).rejected.is_some());
+    }
+}
+
+#[test]
+fn rounded_distributions_are_accepted() {
+    let mut rounded = good_answers();
+    rounded[1].1 = RawAnswer::Choice {
+        choice: "light".into(),
+        probabilities: Some(BTreeMap::from([
+            ("light".into(), 0.61),
+            ("heavy".into(), 0.37),
+        ])),
+        confidence: None,
+    };
+    assert!(admit(&request(), raw(rounded)).rejected.is_none());
+}
+
+#[test]
+fn missing_probabilities_are_recorded_as_unknown_not_invented() {
+    let mut answers = good_answers();
+    answers[1].1 = RawAnswer::Choice {
+        choice: "heavy".into(),
+        probabilities: None,
+        confidence: None,
+    };
+    let decision = admit(&request(), raw(answers));
+    let traces = decision.prediction_traces(&request());
+    let tier = traces
+        .iter()
+        .find(|t| t.prediction.as_ref().unwrap().question_id == "tier")
+        .unwrap();
+    assert_eq!(tier.prediction.as_ref().unwrap().p, None);
+    assert_eq!(
+        tier.prediction.as_ref().unwrap().answer_space,
+        vec!["heavy", "light"]
+    );
+}
+
+#[test]
+fn outcomes_are_validated_and_purged_outcomes_do_not_count() {
+    let path = temp_store("outcomes");
+    let mut store = MemoryStore::open(&path, KernelPolicy::default()).unwrap();
+    let request = request();
+    let engine = StaticEngine {
+        descriptor: engine(),
+        answers: BTreeMap::from([("irreversible".into(), RawAnswer::Noul { noul: 0.9 })]),
+    };
+    let decision = ask(&engine, &request).unwrap();
+    let prediction = decision.prediction_traces(&request).remove(0);
+    let (prediction, _) = store.remember(prediction).unwrap();
+
+    let mut bad = Trace::new(TraceKind::Outcome, "observed", "oncall");
+    bad.outcome = Some(OutcomeRecord {
+        prediction_id: prediction.id.clone(),
+        observed: "yes".into(),
+    });
+    assert!(store.remember(bad).is_err());
+
+    let mut good = Trace::new(TraceKind::Outcome, "observed", "oncall");
+    good.outcome = Some(OutcomeRecord {
+        prediction_id: prediction.id.clone(),
+        observed: "true".into(),
+    });
+    let (good, _) = store.remember(good).unwrap();
+    assert_eq!(store.calibration(None).families[0].n, 1);
+    store
+        .purge(&good.id, "recorded against the wrong incident")
+        .unwrap();
+    let report = store.calibration(None);
+    assert!(report.families.is_empty());
+    assert_eq!(report.unresolved_predictions, 1);
+}

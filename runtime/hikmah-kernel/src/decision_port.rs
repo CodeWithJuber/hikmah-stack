@@ -22,7 +22,11 @@ use std::time::Instant;
 
 pub const MAX_QUESTIONS: usize = 32;
 pub const MAX_STATE_CHARS: usize = 32_000;
-const PROBABILITY_SUM_TOLERANCE: f64 = 0.02;
+/// Engines round probabilities (Jev reports two decimals), so the allowed deviation of the sum
+/// from 1 grows with the number of keys.
+fn sum_tolerance(keys: usize) -> f64 {
+    (0.005 * keys as f64).max(0.02) + 1e-9
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -171,6 +175,31 @@ impl DecisionRequest {
             }
         }
         Ok(())
+    }
+
+    /// Every piece of text that would be sent to an engine.
+    pub fn outbound_texts(&self) -> Vec<&str> {
+        let mut texts = vec![self.state.as_str()];
+        for question in &self.questions {
+            texts.push(&question.instructions);
+            if let Some(family) = &question.family {
+                texts.push(family);
+            }
+            match &question.kind {
+                QuestionKind::Choice { options } => {
+                    for (id, meaning) in options {
+                        texts.push(id);
+                        texts.push(meaning);
+                    }
+                }
+                QuestionKind::Score { levels } => texts.extend(levels.iter().map(String::as_str)),
+                QuestionKind::Noul { if_true, if_false } => {
+                    texts.extend(if_true.as_deref());
+                    texts.extend(if_false.as_deref());
+                }
+            }
+        }
+        texts
     }
 
     /// Stable id derived from the canonical request (state + questions).
@@ -402,7 +431,7 @@ impl AdmittedDecision {
                 AdmittedAnswer::Noul { p_true } => (
                     "noul",
                     if *p_true >= 0.5 { "true" } else { "false" }.to_string(),
-                    *p_true,
+                    Some(*p_true),
                     BTreeMap::from([
                         ("true".to_string(), *p_true),
                         ("false".to_string(), 1.0 - p_true),
@@ -415,11 +444,7 @@ impl AdmittedDecision {
                 } => (
                     "choice",
                     choice.clone(),
-                    probabilities
-                        .get(choice)
-                        .copied()
-                        .or(*confidence)
-                        .unwrap_or(0.5),
+                    probabilities.get(choice).copied().or(*confidence),
                     probabilities.clone(),
                 ),
                 AdmittedAnswer::Score {
@@ -433,15 +458,24 @@ impl AdmittedDecision {
                     probabilities
                         .get(&level.to_string())
                         .copied()
-                        .or(*confidence)
-                        .unwrap_or(0.5),
+                        .or(*confidence),
                     probabilities.clone(),
                 ),
             };
+            let answer_space: Vec<String> = match &question.kind {
+                QuestionKind::Noul { .. } => vec!["true".into(), "false".into()],
+                QuestionKind::Choice { options } => options.keys().cloned().collect(),
+                QuestionKind::Score { levels } => {
+                    (0..levels.len()).map(|i| i.to_string()).collect()
+                }
+            };
+            let shown_p = p
+                .map(|p| format!("{p:.2}"))
+                .unwrap_or_else(|| "unknown".into());
             let mut trace = Trace::new(
                 TraceKind::Prediction,
                 format!(
-                    "{} → {value} (p={p:.2}, {})",
+                    "{} → {value} (p={shown_p}, {})",
                     question.instructions.trim(),
                     self.engine.source()
                 ),
@@ -459,6 +493,7 @@ impl AdmittedDecision {
                 p,
                 value,
                 probabilities,
+                answer_space,
                 calibrated: false,
             });
             traces.push(trace);
@@ -471,9 +506,9 @@ impl AdmittedDecision {
 /// engine failures come back as an all-abstain decision with `rejected` set.
 pub fn ask(engine: &dyn DecisionEngine, request: &DecisionRequest) -> Result<AdmittedDecision> {
     request.validate()?;
-    if contains_secret(&request.state) {
+    if request.outbound_texts().into_iter().any(contains_secret) {
         return Err(KernelError::Invalid(
-            "decision state appears to contain a credential; refusing to send it to a decision engine"
+            "the request appears to contain a credential; refusing to send it to a decision engine"
                 .into(),
         ));
     }
@@ -576,7 +611,7 @@ fn check_distribution(
         }
         sum += p;
     }
-    if (sum - 1.0).abs() > PROBABILITY_SUM_TOLERANCE {
+    if (sum - 1.0).abs() > sum_tolerance(probabilities.len()) {
         return Err(format!(
             "{}: probabilities sum to {sum:.3}, not 1",
             question.id
@@ -620,6 +655,16 @@ fn admit_answer(
             check_confidence(question, *confidence)?;
             let probabilities = probabilities.clone().unwrap_or_default();
             check_distribution(question, &probabilities, |k| options.contains_key(k))?;
+            if !probabilities.is_empty() {
+                let chosen = probabilities.get(choice).copied().unwrap_or(0.0);
+                let best = probabilities.values().copied().fold(0.0_f64, f64::max);
+                if chosen <= 0.0 || chosen + 1e-9 < best {
+                    return Err(format!(
+                        "{}: `{choice}` is not the most probable option in its own distribution",
+                        question.id
+                    ));
+                }
+            }
             Ok(AdmittedAnswer::Choice {
                 choice: choice.clone(),
                 probabilities,
@@ -643,11 +688,25 @@ fn admit_answer(
             }
             check_confidence(question, *confidence)?;
             let probabilities = probabilities.clone().unwrap_or_default();
+            // Level keys must be canonical indices ("0", "1", ...), never aliases like "01".
             check_distribution(question, &probabilities, |k| {
                 k.parse::<usize>()
-                    .map(|i| i < levels.len())
+                    .map(|i| i < levels.len() && k == i.to_string())
                     .unwrap_or(false)
             })?;
+            if !probabilities.is_empty() {
+                let expected: f64 = probabilities
+                    .iter()
+                    .map(|(k, p)| k.parse::<f64>().unwrap_or(0.0) * p)
+                    .sum();
+                let tolerance = 0.02 * top + 0.02;
+                if (expected - score).abs() > tolerance {
+                    return Err(format!(
+                        "{}: score {score} disagrees with its distribution (expected {expected:.3})",
+                        question.id
+                    ));
+                }
+            }
             Ok(AdmittedAnswer::Score {
                 score: *score,
                 normalized: score / top,

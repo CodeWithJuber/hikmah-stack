@@ -6,6 +6,9 @@
 //! - ignore a completion word or placeholder that is negated just before it
 //!   (`not done`, `no placeholder text remains`);
 //! - ignore fenced and inline code, where TODOs are usually quoted legacy code;
+//! - normalize first (Unicode NFC, curly apostrophes, zero-width characters, every whitespace
+//!   character except newline to a space) and use ASCII word boundaries, so the Rust and Python
+//!   implementations agree on unusual Unicode;
 //! - block only when an un-negated completion claim co-occurs with an un-negated unfinished
 //!   marker or a first-person future-work promise.
 //!
@@ -21,9 +24,12 @@ use regex::Regex;
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::sync::OnceLock;
+use unicode_normalization::UnicodeNormalization;
 
 pub const DEFAULT_ENGINE_THRESHOLD: f64 = 0.8;
 const MAX_ENGINE_STATE_CHARS: usize = 8_000;
+/// How far back (in characters) negation is looked for, which keeps the check linear.
+const NEGATION_WINDOW_CHARS: usize = 200;
 
 const BLOCK_REASON: &str = "Hikmah Truth Gate: the response claims completion while still containing unfinished work or a future-work promise. Resolve it or state the limitation explicitly.";
 
@@ -41,15 +47,15 @@ fn rules() -> &'static Rules {
         fence: Regex::new(r"(?s)```.*?(?:```|$)").expect("fence regex"),
         inline_code: Regex::new(r"`[^`\n]*`").expect("inline code regex"),
         completion: Regex::new(
-            r"\b(done|complete|completed|finished|ready|shipped|implemented|fixed|resolved|delivered)\b",
+            r"(?-u:\b)(done|complete|completed|finished|ready|shipped|implemented|fixed|resolved|delivered)(?-u:\b)",
         )
         .expect("completion regex"),
         unfinished: Regex::new(
-            r"\b(todo|tbd|fixme|placeholder|coming soon)\b|<insert[^>]*>|\[insert[^\]]*\]",
+            r"(?-u:\b)(todo|tbd|fixme|placeholder|coming soon)(?-u:\b)|<insert[^>]*>|\[insert[^\]]*\]",
         )
         .expect("unfinished regex"),
         promise: Regex::new(
-            r"\b(i|we)(?:'ll|\s+will|\s+shall)\s+(?:(?:also|then|still|now|soon|later|next)\s+)?(finish|complete|upload|create|test|verify|send|provide|add|write|fix|update|run|check|share|push|deploy|follow up)\b",
+            r"(?-u:\b)(i|we)(?:'ll| +will| +shall) +(?:(?:also|then|still|now|soon|later|next) +)?(finish|complete|upload|create|test|verify|send|provide|add|write|fix|update|run|check|share|push|deploy|follow up)(?-u:\b)",
         )
         .expect("promise regex"),
     })
@@ -81,42 +87,57 @@ const UNFINISHED_NEGATORS: &[&str] = &[
 const PLACEHOLDER_UI_TERMS: &[&str] = &["text", "attribute", "prop", "image", "color", "value"];
 
 fn normalize(message: &str) -> String {
-    let lowered = message
-        .to_lowercase()
-        .replace(['\u{2019}', '\u{2018}', '\u{02bc}'], "'");
+    let mut text = String::with_capacity(message.len());
+    for c in message.nfc() {
+        let c = match c {
+            '\u{2019}' | '\u{2018}' | '\u{02bc}' => '\'',
+            '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}' => continue,
+            '\n' => '\n',
+            c if c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c) => ' ',
+            c => c,
+        };
+        text.extend(c.to_lowercase());
+    }
     let rules = rules();
-    let without_fences = rules.fence.replace_all(&lowered, " ");
+    let without_fences = rules.fence.replace_all(&text, " ");
     rules
         .inline_code
         .replace_all(&without_fences, " ")
         .into_owned()
 }
 
-fn previous_words(text: &str, end: usize, count: usize) -> Vec<&str> {
-    text[..end]
-        .split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')'))
+fn is_separator(c: char) -> bool {
+    matches!(c, ' ' | '\n' | ',' | ';' | ':' | '(' | ')')
+}
+
+fn negated(text: &str, start: usize, negators: &[&str]) -> bool {
+    let head = &text[..start];
+    // Bounded look-back keeps the rules linear on long, unpunctuated text.
+    let window_start = head
+        .char_indices()
+        .rev()
+        .nth(NEGATION_WINDOW_CHARS - 1)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let window = &head[window_start..];
+    // Look back within the current sentence only.
+    let sentence = match window.rfind(['.', '!', '?', '\n']) {
+        Some(i) => &window[i + 1..],
+        None => window,
+    };
+    sentence
+        .split(is_separator)
         .filter(|w| !w.is_empty())
         .rev()
-        .take(count)
+        .take(3)
         .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\''))
-        .collect()
+        .any(|w| negators.contains(&w) || w.ends_with("n't"))
 }
 
 fn next_word(text: &str, start: usize) -> Option<&str> {
     text[start..]
-        .split(|c: char| !c.is_alphanumeric())
+        .split(|c: char| !c.is_ascii_alphanumeric())
         .find(|w| !w.is_empty())
-}
-
-fn negated(text: &str, start: usize, negators: &[&str]) -> bool {
-    // Look back within the current sentence only.
-    let sentence_start = text[..start]
-        .rfind(['.', '!', '?', '\n'])
-        .map(|i| i + 1)
-        .unwrap_or(0);
-    previous_words(&text[sentence_start..], start - sentence_start, 3)
-        .iter()
-        .any(|w| negators.contains(w) || w.ends_with("n't"))
 }
 
 /// Deterministic verdict: `true` means block.
@@ -144,6 +165,38 @@ pub fn rules_verdict(message: &str) -> bool {
         true
     });
     unfinished || rules.promise.is_match(&text)
+}
+
+/// Parse the hook payload. Hosts can emit lone surrogate escapes (a truncated emoji) or numbers
+/// a strict parser rejects; those must not turn the gate off, so fall back to a sanitized parse
+/// and finally to extracting the two fields the gate needs.
+fn parse_payload(buffer: &str) -> Value {
+    if let Ok(value) = serde_json::from_str(buffer) {
+        return value;
+    }
+    static PATTERNS: OnceLock<(Regex, Regex, Regex)> = OnceLock::new();
+    let (surrogate, message, active) = PATTERNS.get_or_init(|| {
+        (
+            Regex::new(r"\\u[dD][89abAB][0-9a-fA-F]{2}").expect("surrogate regex"),
+            Regex::new(r#""last_assistant_message"\s*:\s*"((?:[^"\\]|\\.)*)""#)
+                .expect("message regex"),
+            Regex::new(r#""stop_hook_active"\s*:\s*(?:true|"true"|"1"|1)\b"#)
+                .expect("active regex"),
+        )
+    });
+    let sanitized = surrogate.replace_all(buffer, "\\ufffd");
+    if let Ok(value) = serde_json::from_str(&sanitized) {
+        return value;
+    }
+    let Some(captured) = message.captures(&sanitized).and_then(|c| c.get(1)) else {
+        return Value::Null;
+    };
+    let text: String =
+        serde_json::from_str(&format!("\"{}\"", captured.as_str())).unwrap_or_default();
+    json!({
+        "last_assistant_message": text,
+        "stop_hook_active": active.is_match(&sanitized),
+    })
 }
 
 fn truthy(value: Option<&Value>) -> bool {
@@ -191,7 +244,7 @@ pub fn run_stop_hook_with(
     let mut bytes = Vec::new();
     input.read_to_end(&mut bytes)?;
     let buffer = String::from_utf8_lossy(&bytes);
-    let payload: Value = serde_json::from_str(&buffer).unwrap_or(Value::Null);
+    let payload = parse_payload(&buffer);
     let allow = |output: &mut dyn Write| writeln!(output, "{{}}");
     if !payload.is_object() || truthy(payload.get("stop_hook_active")) {
         allow(&mut output)?;
@@ -256,8 +309,30 @@ mod tests {
             "Not done yet: I'll finish the tests tomorrow.",
             "Finished. No placeholder text remains.",
             "Added placeholder text to the email input. Done.",
+            "Doné. TODO",
         ] {
             assert!(!rules_verdict(message), "should allow: {message}");
+        }
+    }
+
+    #[test]
+    fn long_unpunctuated_text_stays_fast() {
+        let text = "not done ".repeat(50_000);
+        let started = std::time::Instant::now();
+        let _ = rules_verdict(&text);
+        assert!(started.elapsed().as_secs() < 2);
+    }
+
+    #[test]
+    fn lone_surrogates_and_huge_numbers_do_not_disable_the_gate() {
+        for input in [
+            r#"{"last_assistant_message":"Done. TODO: add tests \ud83d"}"#,
+            r#"{"x":1e400,"last_assistant_message":"Done. TODO: add tests"}"#,
+        ] {
+            let mut out = Vec::new();
+            run_stop_hook(input.as_bytes(), &mut out).unwrap();
+            let verdict: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(verdict["decision"], "block", "{input}");
         }
     }
 
@@ -269,6 +344,8 @@ mod tests {
             "Implemented the parser. I will test it tomorrow.",
             "Shipped. I\u{2019}ll send the notes.",
             "Complete. Replace <insert name here>.",
+            "Fixed\u{200d}. TODO: tests",
+            "Done. we\u{1c}will test it",
         ] {
             assert!(rules_verdict(message), "should block: {message}");
         }

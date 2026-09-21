@@ -7,8 +7,11 @@
 //!
 //! where `cue ∈ [0,1]` comes from query-term coverage and Jaccard overlap (plus tag coverage), and
 //! `meta ∈ [0,1]` blends recency, salience, confidence, provenance, and commitment urgency.
-//! Self-reported salience/confidence can therefore reorder relevant memories by less than 2×
-//! but can never make an irrelevant memory appear. Overdue commitments surface without a cue.
+//! `minimum_recall_score` is applied to `cue` (relevance), not to the final score, and any shared
+//! content term lifts `cue` to at least `MATCH_FLOOR`, so a long natural-language question that
+//! shares one key word with a memory still recalls it. Self-reported salience/confidence can
+//! reorder relevant memories by less than 2× but can never make an irrelevant memory appear.
+//! Overdue commitments surface without a cue. A query made only of stopwords matches nothing.
 //! The weights are explicit design choices, not calibrated values.
 use crate::ledger::MemoryStore;
 use crate::trace::{now_ms, PrivacyClass, Trace, TraceKind};
@@ -58,6 +61,8 @@ pub struct RecallResult {
 }
 
 const REDUNDANT_AT: f32 = 0.8;
+/// Relevance given to any trace that shares at least one content term with the query.
+const MATCH_FLOOR: f32 = 0.15;
 
 impl MemoryStore {
     pub fn recall(&self, query: &RecallQuery) -> Vec<RecallResult> {
@@ -69,6 +74,11 @@ impl MemoryStore {
             .filter(|t| !t.is_empty())
             .collect();
         let has_cue = !query_terms.is_empty() || !query_tags.is_empty();
+        // Text was given but every word was a stopword: there is nothing to match on.
+        if !has_cue && query.text.chars().any(char::is_alphanumeric) {
+            return Vec::new();
+        }
+        let minimum = self.policy().minimum_recall_score;
         let limit = query.limit.min(self.policy().recall_limit).max(1);
         let allow_sensitive = self.policy().allow_sensitive_persistence;
         let mut candidates: Vec<RecallResult> = self
@@ -83,9 +93,15 @@ impl MemoryStore {
             })
             .filter(|trace| allow_sensitive || trace.privacy != PrivacyClass::Sensitive)
             .filter_map(|trace| {
-                score_trace(trace, &query_terms, &query_tags, has_cue, query.now_ms)
+                score_trace(
+                    trace,
+                    &query_terms,
+                    &query_tags,
+                    has_cue,
+                    query.now_ms,
+                    minimum,
+                )
             })
-            .filter(|result| result.score >= self.policy().minimum_recall_score)
             .collect();
 
         candidates.sort_by(|a, b| {
@@ -95,7 +111,7 @@ impl MemoryStore {
                 .then_with(|| b.trace.created_at_ms.cmp(&a.trace.created_at_ms))
         });
 
-        diversify(candidates, limit, self.policy().minimum_recall_score)
+        diversify(candidates, limit)
     }
 }
 
@@ -105,12 +121,19 @@ fn score_trace(
     query_tags: &BTreeSet<String>,
     has_cue: bool,
     now_ms: u64,
+    minimum: f32,
 ) -> Option<RecallResult> {
     let trace_terms = tokenize(&trace.content);
     let lexical = if query_terms.is_empty() {
         0.0
     } else {
-        0.7 * coverage(query_terms, &trace_terms) + 0.3 * jaccard(query_terms, &trace_terms)
+        let blended =
+            0.7 * coverage(query_terms, &trace_terms) + 0.3 * jaccard(query_terms, &trace_terms);
+        if blended > 0.0 {
+            blended.max(MATCH_FLOOR)
+        } else {
+            0.0
+        }
     };
     let trace_tags: BTreeSet<String> = trace
         .tags
@@ -148,7 +171,7 @@ fn score_trace(
         .clamp(0.0, 1.0);
     let overdue = prospective >= 1.0;
     let score = if has_cue {
-        if cue <= 0.0 && !overdue {
+        if cue < minimum && !overdue {
             return None;
         }
         (cue * (0.55 + 0.45 * meta)).max(if overdue { 0.15 } else { 0.0 })
@@ -174,7 +197,7 @@ fn score_trace(
     })
 }
 
-fn diversify(candidates: Vec<RecallResult>, limit: usize, minimum: f32) -> Vec<RecallResult> {
+fn diversify(candidates: Vec<RecallResult>, limit: usize) -> Vec<RecallResult> {
     let mut selected: Vec<(RecallResult, BTreeSet<String>)> = Vec::new();
     for mut candidate in candidates {
         let terms = tokenize(&candidate.trace.content);
@@ -199,9 +222,6 @@ fn diversify(candidates: Vec<RecallResult>, limit: usize, minimum: f32) -> Vec<R
             continue;
         }
         candidate.score *= 1.0 - 0.35 * redundancy;
-        if candidate.score < minimum {
-            continue;
-        }
         selected.push((candidate, terms));
         selected.sort_by(|a, b| {
             b.0.score
@@ -232,23 +252,33 @@ const STOPWORDS: &[&str] = &[
 
 fn is_cjk(c: char) -> bool {
     matches!(c as u32,
-        0x3040..=0x30FF   // Hiragana, Katakana
-        | 0x3400..=0x4DBF // CJK Extension A
-        | 0x4E00..=0x9FFF // CJK Unified Ideographs
-        | 0xAC00..=0xD7AF // Hangul syllables
-        | 0xF900..=0xFAFF)
+        0x1100..=0x11FF     // Hangul Jamo
+        | 0x3040..=0x30FF   // Hiragana, Katakana
+        | 0x3130..=0x318F   // Hangul compatibility Jamo
+        | 0x3400..=0x4DBF   // CJK Extension A
+        | 0x4E00..=0x9FFF   // CJK Unified Ideographs
+        | 0xAC00..=0xD7AF   // Hangul syllables
+        | 0xF900..=0xFAFF   // CJK compatibility ideographs
+        | 0xFF66..=0xFF9F   // Half-width katakana
+        | 0x20000..=0x2FA1F) // CJK Extensions B-F and compatibility supplement
 }
 
-/// Light English suffix folding applied identically to queries and traces:
-/// strip one of `ing`/`ed`/`s`, then a trailing `e` (so service/services/serviced agree).
+/// Light English suffix folding applied identically to queries and traces: strip a plural `s`,
+/// then one of `ing`/`ed`, then a trailing `e`, so setting/settings, service/services, and
+/// release/released agree.
 fn stem(token: &str) -> String {
     if !token.is_ascii() || token.len() <= 4 {
         return token.to_string();
     }
     let mut word = token;
-    for suffix in ["ing", "ed", "s"] {
+    if let Some(base) = word.strip_suffix('s') {
+        if base.len() >= 4 && !base.ends_with('s') {
+            word = base;
+        }
+    }
+    for suffix in ["ing", "ed"] {
         if let Some(base) = word.strip_suffix(suffix) {
-            if base.len() >= 3 && !(suffix == "s" && base.ends_with('s')) {
+            if base.len() >= 3 {
                 word = base;
                 break;
             }
@@ -262,6 +292,25 @@ fn stem(token: &str) -> String {
     word.to_string()
 }
 
+fn push_word(out: &mut BTreeSet<String>, word: &str) {
+    let is_number = word.chars().all(|c| c.is_ascii_digit());
+    if word.is_empty() || (!is_number && word.chars().count() < 2) || STOPWORDS.contains(&word) {
+        return;
+    }
+    out.insert(stem(word));
+}
+
+fn push_cjk_run(out: &mut BTreeSet<String>, run: &[char]) {
+    // Scripts written without spaces: index character bigrams (and single characters for
+    // one-character runs) so a phrase can match inside a longer clause.
+    if run.len() == 1 {
+        out.insert(run[0].to_string());
+    }
+    for pair in run.windows(2) {
+        out.insert(pair.iter().collect());
+    }
+}
+
 pub(crate) fn tokenize(text: &str) -> BTreeSet<String> {
     let lower = text.to_lowercase();
     let mut out = BTreeSet::new();
@@ -269,26 +318,27 @@ pub(crate) fn tokenize(text: &str) -> BTreeSet<String> {
         if raw.is_empty() {
             continue;
         }
-        if raw.chars().any(is_cjk) {
-            // Scripts written without spaces: index character bigrams (and single characters
-            // for one-character runs) so a phrase can match inside a longer clause.
-            let chars: Vec<char> = raw.chars().collect();
-            if chars.len() == 1 {
-                out.insert(raw.to_string());
+        if !raw.chars().any(is_cjk) {
+            push_word(&mut out, raw);
+            continue;
+        }
+        // Split mixed tokens such as "修复了api的bug" into same-script runs.
+        let chars: Vec<char> = raw.chars().collect();
+        let mut start = 0;
+        while start < chars.len() {
+            let cjk = is_cjk(chars[start]);
+            let mut end = start + 1;
+            while end < chars.len() && is_cjk(chars[end]) == cjk {
+                end += 1;
             }
-            for pair in chars.windows(2) {
-                out.insert(pair.iter().collect());
+            if cjk {
+                push_cjk_run(&mut out, &chars[start..end]);
+            } else {
+                let word: String = chars[start..end].iter().collect();
+                push_word(&mut out, &word);
             }
-            continue;
+            start = end;
         }
-        let is_number = raw.chars().all(|c| c.is_ascii_digit());
-        if !is_number && raw.chars().count() < 2 {
-            continue;
-        }
-        if STOPWORDS.contains(&raw) {
-            continue;
-        }
-        out.insert(stem(raw));
     }
     out
 }
@@ -331,6 +381,21 @@ mod tests {
         assert!(!q.contains("the"));
         assert!(!q.contains("why"));
         assert!(tokenize("python 3").contains("3"));
+    }
+
+    #[test]
+    fn plural_and_ing_forms_agree() {
+        assert_eq!(stem("settings"), stem("setting"));
+        assert_eq!(stem("services"), stem("service"));
+        assert_eq!(stem("released"), stem("release"));
+        assert_eq!(stem("warnings"), stem("warning"));
+    }
+
+    #[test]
+    fn mixed_script_tokens_keep_latin_words() {
+        let t = tokenize("修复了API的bug");
+        assert!(t.contains("api") && t.contains("bug"));
+        assert!(t.contains("修复"));
     }
 
     #[test]

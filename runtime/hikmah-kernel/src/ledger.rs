@@ -11,8 +11,10 @@
 //! exclusive file lock, re-read records other processes appended since this store was opened,
 //! and write each batch with a single `write_all`. A torn final line (crash mid-write) is ignored
 //! on read and truncated by the next writer. A `<store>.head` file records the latest
-//! `{seq, hash}` so truncation and wholesale re-chaining are detectable when the head file (or a
-//! pinned head passed to `verify_report`) is kept out of the writer's reach.
+//! `{seq, hash}`: it is read before the ledger (so a concurrent writer cannot cause a false
+//! alarm), checked under the lock before every write (so a write cannot paper over a truncation or
+//! rewrite), and can be pinned externally through `verify_report(Some(head))`. `reset_head`
+//! accepts the current ledger after a deliberate repair.
 use crate::claims::{detect_conflicts, ClaimConflict};
 use crate::error::{KernelError, Result};
 use crate::policy::KernelPolicy;
@@ -97,6 +99,15 @@ pub struct VerifyReport {
     pub warnings: Vec<String>,
 }
 
+/// The `<store>.head` file as read *before* the ledger (so a concurrent writer can never make
+/// the snapshot look ahead of the records it is compared with).
+#[derive(Debug, Clone, PartialEq)]
+enum HeadState {
+    Missing,
+    Present(LedgerHead),
+    Unreadable(String),
+}
+
 #[derive(Debug)]
 pub struct MemoryStore {
     path: PathBuf,
@@ -108,6 +119,7 @@ pub struct MemoryStore {
     torn_tail_bytes: u64,
     missing_final_newline: bool,
     replay_issues: Vec<String>,
+    head_at_load: HeadState,
 }
 
 impl MemoryStore {
@@ -120,9 +132,8 @@ impl MemoryStore {
                 fs::create_dir_all(parent)?;
             }
         }
-        if !path.exists() {
-            File::create(&path)?;
-        }
+        // Never truncate: `File::create` would race with a concurrent creator and erase its record.
+        OpenOptions::new().create(true).append(true).open(&path)?;
         Self::load(path, policy)
     }
 
@@ -148,18 +159,26 @@ impl MemoryStore {
             torn_tail_bytes: 0,
             missing_final_newline: false,
             replay_issues: Vec::new(),
+            head_at_load: HeadState::Missing,
         };
-        let text = fs::read_to_string(&store.path)?;
-        store.replay_chunk(&text)?;
+        // Read the head before the ledger: heads are written only after their records are
+        // synced, so this snapshot can never be ahead of what we are about to read.
+        store.head_at_load = read_head(&store.head_path());
+        let bytes = fs::read(&store.path)?;
+        store.replay_bytes(&bytes)?;
         Ok(store)
     }
 
-    /// Replay complete lines of `chunk` (which starts at `self.offset`).
-    fn replay_chunk(&mut self, chunk: &str) -> Result<()> {
+    /// Replay complete lines of `chunk` (which starts at `self.offset`). Works on bytes so a
+    /// torn final line that ends inside a multi-byte character is still treated as a torn tail.
+    fn replay_bytes(&mut self, chunk: &[u8]) -> Result<()> {
         let mut consumed = 0_usize;
         let mut rest = chunk;
-        while let Some(pos) = rest.find('\n') {
-            let line = &rest[..pos];
+        while let Some(pos) = rest.iter().position(|&b| b == b'\n') {
+            let line = std::str::from_utf8(&rest[..pos]).map_err(|_| KernelError::Integrity {
+                seq: self.records.len() as u64 + 1,
+                message: "ledger record is not valid UTF-8".into(),
+            })?;
             self.replay_line(line)?;
             consumed += pos + 1;
             rest = &rest[pos + 1..];
@@ -170,14 +189,17 @@ impl MemoryStore {
         if !rest.is_empty() {
             // A final line without '\n'. Either a complete record whose newline never landed
             // (older binaries wrote record and newline in two syscalls) or a torn write.
-            if serde_json::from_str::<RawRecord>(rest).is_ok() {
-                self.replay_line(rest)?;
-                self.offset += rest.len() as u64;
-                self.missing_final_newline = true;
-            } else if rest.trim().is_empty() {
-                self.offset += rest.len() as u64;
-            } else {
-                self.torn_tail_bytes = rest.len() as u64;
+            match std::str::from_utf8(rest) {
+                Ok(text) if serde_json::from_str::<RawRecord>(text).is_ok() => {
+                    self.replay_line(text)?;
+                    self.offset += rest.len() as u64;
+                    self.missing_final_newline = true;
+                }
+                // Only JSON whitespace may be kept in front of the next record.
+                Ok(text) if text.bytes().all(|b| matches!(b, b' ' | b'\t' | b'\r')) => {
+                    self.offset += rest.len() as u64;
+                }
+                _ => self.torn_tail_bytes = rest.len() as u64,
             }
         }
         Ok(())
@@ -300,6 +322,17 @@ impl MemoryStore {
                     outcome.prediction_id
                 )));
             }
+            if let Some(record) = &prediction.trace.prediction {
+                let observed = outcome.observed.trim();
+                if !record.answer_space.is_empty()
+                    && !record.answer_space.iter().any(|v| v == observed)
+                {
+                    return Err(KernelError::Invalid(format!(
+                        "observed value `{observed}` is not one of {:?}",
+                        record.answer_space
+                    )));
+                }
+            }
         }
 
         let superseded = trace.supersedes.clone();
@@ -421,29 +454,37 @@ impl MemoryStore {
         let head = self.head();
         let mut ok = true;
         let mut head_file_checked = false;
-        let head_path = self.head_path();
-        if head_path.is_file() {
-            let stored: LedgerHead = serde_json::from_str(&fs::read_to_string(&head_path)?)?;
-            head_file_checked = true;
-            let count = self.records.len() as u64;
-            if stored.seq > count {
+        match &self.head_at_load {
+            HeadState::Missing => {}
+            HeadState::Unreadable(error) => {
                 ok = false;
                 warnings.push(format!(
-                    "ledger has {count} records but its head file records seq {}: records were removed",
-                    stored.seq
+                    "head file is unreadable ({error}); inspect it, then run `hikmah verify-ledger --reset-head` to accept the current ledger"
                 ));
-            } else if stored.seq > 0 && self.records[(stored.seq - 1) as usize].hash != stored.hash
-            {
-                ok = false;
-                warnings.push(format!(
-                    "record {} does not match the head file hash: the ledger was rewritten",
-                    stored.seq
-                ));
-            } else if stored.seq < count {
-                warnings.push(format!(
-                    "{} record(s) after the recorded head (written by an older binary?)",
-                    count - stored.seq
-                ));
+            }
+            HeadState::Present(stored) => {
+                head_file_checked = true;
+                let count = self.records.len() as u64;
+                if stored.seq > count {
+                    ok = false;
+                    warnings.push(format!(
+                        "ledger has {count} records but its head file records seq {}: records were removed",
+                        stored.seq
+                    ));
+                } else if stored.seq > 0
+                    && self.records[(stored.seq - 1) as usize].hash != stored.hash
+                {
+                    ok = false;
+                    warnings.push(format!(
+                        "record {} does not match the head file hash: the ledger was rewritten",
+                        stored.seq
+                    ));
+                } else if stored.seq < count {
+                    warnings.push(format!(
+                        "{} record(s) after the recorded head (written by an older binary, or a crash before the head update)",
+                        count - stored.seq
+                    ));
+                }
             }
         }
         if let Some(expected) = expected_head {
@@ -475,6 +516,7 @@ impl MemoryStore {
             .open(&self.path)?;
         file.lock()?;
         self.sync_tail(&mut file)?;
+        self.check_head_before_write()?;
         validate_batch(&self.traces, &payloads)?;
 
         let mut buffer = String::new();
@@ -524,9 +566,9 @@ impl MemoryStore {
         }
         if len > self.offset {
             file.seek(SeekFrom::Start(self.offset))?;
-            let mut tail = String::new();
-            file.read_to_string(&mut tail)?;
-            self.replay_chunk(&tail)?;
+            let mut tail = Vec::new();
+            file.read_to_end(&mut tail)?;
+            self.replay_bytes(&tail)?;
         }
         if self.torn_tail_bytes > 0 {
             file.set_len(self.offset)?;
@@ -544,7 +586,55 @@ impl MemoryStore {
         Ok(())
     }
 
-    fn write_head(&self) -> Result<()> {
+    /// Under the write lock: refuse to append when the head file shows the ledger was truncated
+    /// or rewritten, so an ordinary write can never paper over tamper evidence.
+    fn check_head_before_write(&self) -> Result<()> {
+        let count = self.records.len() as u64;
+        match read_head(&self.head_path()) {
+            HeadState::Missing => Ok(()),
+            HeadState::Unreadable(error) => Err(KernelError::Integrity {
+                seq: count,
+                message: format!(
+                    "head file is unreadable ({error}); run `hikmah verify-ledger --reset-head` after inspecting the ledger"
+                ),
+            }),
+            HeadState::Present(head) => {
+                let rewritten = head.seq > count
+                    || (head.seq > 0 && self.records[(head.seq - 1) as usize].hash != head.hash);
+                if rewritten {
+                    Err(KernelError::Integrity {
+                        seq: head.seq,
+                        message: "the ledger no longer matches its head file (records removed or rewritten); refusing to write. Inspect it, then run `hikmah verify-ledger --reset-head` to accept the current ledger".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    /// Explicitly accept the current ledger as the new head (after a deliberate repair).
+    pub fn reset_head(&mut self) -> Result<Option<LedgerHead>> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(&self.path)?;
+        file.lock()?;
+        self.sync_tail(&mut file)?;
+        let path = self.head_path();
+        if self.records.is_empty() {
+            if path.exists() {
+                fs::remove_file(&path)?;
+            }
+            self.head_at_load = HeadState::Missing;
+            return Ok(None);
+        }
+        self.write_head()?;
+        Ok(self.head())
+    }
+
+    fn write_head(&mut self) -> Result<()> {
         let Some(head) = self.head() else {
             return Ok(());
         };
@@ -552,8 +642,13 @@ impl MemoryStore {
         let mut tmp = path.as_os_str().to_owned();
         tmp.push(".tmp");
         let tmp = PathBuf::from(tmp);
-        fs::write(&tmp, serde_json::to_vec(&head)?)?;
+        {
+            let mut file = File::create(&tmp)?;
+            file.write_all(&serde_json::to_vec(&head)?)?;
+            file.sync_all()?;
+        }
         fs::rename(&tmp, &path)?;
+        self.head_at_load = HeadState::Present(head);
         Ok(())
     }
 
@@ -567,6 +662,17 @@ impl MemoryStore {
         );
         let hash = blake3::hash(seed.as_bytes()).to_hex().to_string();
         format!("tr_{}", &hash[..16])
+    }
+}
+
+fn read_head(path: &Path) -> HeadState {
+    match fs::read(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => HeadState::Missing,
+        Err(error) => HeadState::Unreadable(error.to_string()),
+        Ok(bytes) => match serde_json::from_slice::<LedgerHead>(&bytes) {
+            Ok(head) => HeadState::Present(head),
+            Err(error) => HeadState::Unreadable(error.to_string()),
+        },
     }
 }
 

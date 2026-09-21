@@ -157,3 +157,9 @@ fn live_jev_round_trip() {
     assert!(decision.rejected.is_none(), "{:?}", decision.rejected);
     println!("{}", serde_json::to_string_pretty(&decision).unwrap());
 }
+
+#[test]
+fn huge_timeouts_are_clamped_instead_of_panicking() {
+    let engine = JevEngine::new("test-key").with_timeout(Duration::MAX);
+    assert_eq!(engine.timeout(), Duration::from_secs(60));
+}

@@ -88,9 +88,10 @@ fn predictions_are_only_recalled_when_asked_for() {
         family: "risky".into(),
         answer_kind: "noul".into(),
         engine: "jev@jev-1".into(),
-        p: 0.8,
+        p: Some(0.8),
         value: "true".into(),
         probabilities: BTreeMap::new(),
+        answer_space: vec!["true".into(), "false".into()],
         calibrated: false,
     });
     s.remember(prediction).unwrap();
@@ -121,4 +122,34 @@ fn overdue_commitments_surface_without_a_lexical_match() {
     s.remember(commitment).unwrap();
     let results = s.recall(&RecallQuery::new("quarterly roadmap"));
     assert_eq!(results.len(), 1);
+}
+
+#[test]
+fn a_long_question_still_recalls_a_one_keyword_match() {
+    let mut s = store("long-question");
+    let id = add(
+        &mut s,
+        "Postgres migration was rolled back after lock contention",
+    );
+    let results = s.recall(&RecallQuery::new(
+        "why did the database migration fail last night in production",
+    ));
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].trace.id, id);
+}
+
+#[test]
+fn stopword_only_queries_match_nothing() {
+    let mut s = store("stopwords");
+    add(&mut s, "Office city is Dubai");
+    assert!(s.recall(&RecallQuery::new("will the")).is_empty());
+}
+
+#[test]
+fn inflected_and_mixed_script_words_match() {
+    let mut s = store("inflection");
+    let settings = add(&mut s, "The settings page loads slowly");
+    let bug = add(&mut s, "修复了API的bug");
+    assert_eq!(s.recall(&RecallQuery::new("setting"))[0].trace.id, settings);
+    assert_eq!(s.recall(&RecallQuery::new("api bug"))[0].trace.id, bug);
 }

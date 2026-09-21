@@ -51,3 +51,13 @@ fn values_keep_case_but_canonical_unicode_agrees() {
     assert_eq!(proposals.len(), 1);
     assert!(proposals[0].eligible_for_promotion);
 }
+
+#[test]
+fn unattributed_writes_count_as_one_source() {
+    let mut s = MemoryStore::open(temp_store("unattributed"), KernelPolicy::default()).unwrap();
+    s.remember(claim("user", "/srv/app", 0.9)).unwrap();
+    s.remember(claim("unknown", "/srv/app", 0.9)).unwrap();
+    let proposal = &s.consolidation_proposals()[0];
+    assert_eq!(proposal.independent_sources, vec!["unattributed"]);
+    assert!(!proposal.eligible_for_promotion);
+}

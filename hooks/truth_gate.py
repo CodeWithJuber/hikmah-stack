@@ -7,11 +7,14 @@ without the `hikmah` binary. Both implementations are tested against `truth_gate
 
 The gate does NOT fact-check. It blocks only when an un-negated completion claim co-occurs with
 an un-negated unfinished marker or a first-person future-work promise. Whole words only, negation
-just before a word cancels it, and fenced or inline code is ignored.
+just before a word cancels it, and fenced or inline code is ignored. Text is normalized the same
+way as in Rust (NFC, curly apostrophes, zero-width characters removed, whitespace other than
+newline mapped to a space) and word boundaries are ASCII, so both implementations agree.
 """
 import json
 import re
 import sys
+import unicodedata
 
 BLOCK_REASON = (
     "Hikmah Truth Gate: the response claims completion while still containing unfinished work "
@@ -21,13 +24,17 @@ BLOCK_REASON = (
 FENCE = re.compile(r"```.*?(?:```|$)", re.S)
 INLINE_CODE = re.compile(r"`[^`\n]*`")
 COMPLETION = re.compile(
-    r"\b(done|complete|completed|finished|ready|shipped|implemented|fixed|resolved|delivered)\b"
+    r"\b(done|complete|completed|finished|ready|shipped|implemented|fixed|resolved|delivered)\b",
+    re.ASCII,
 )
-UNFINISHED = re.compile(r"\b(todo|tbd|fixme|placeholder|coming soon)\b|<insert[^>]*>|\[insert[^\]]*\]")
+UNFINISHED = re.compile(
+    r"\b(todo|tbd|fixme|placeholder|coming soon)\b|<insert[^>]*>|\[insert[^\]]*\]", re.ASCII
+)
 PROMISE = re.compile(
-    r"\b(i|we)(?:'ll|\s+will|\s+shall)\s+(?:(?:also|then|still|now|soon|later|next)\s+)?"
+    r"\b(i|we)(?:'ll| +will| +shall) +(?:(?:also|then|still|now|soon|later|next) +)?"
     r"(finish|complete|upload|create|test|verify|send|provide|add|write|fix|update|run|check|"
-    r"share|push|deploy|follow up)\b"
+    r"share|push|deploy|follow up)\b",
+    re.ASCII,
 )
 COMPLETION_NEGATORS = {
     "not", "never", "no", "isn't", "aren't", "wasn't", "weren't", "haven't", "hasn't", "hadn't",
@@ -35,25 +42,42 @@ COMPLETION_NEGATORS = {
 }
 UNFINISHED_NEGATORS = {"no", "without", "zero", "removed", "remove", "replaced", "resolved", "cleared"}
 PLACEHOLDER_UI_TERMS = {"text", "attribute", "prop", "image", "color", "value"}
-WORD_SPLIT = re.compile(r"[\s,;:()]+")
+WORD_SPLIT = re.compile(r"[ \n,;:()]+")
+NEGATION_WINDOW_CHARS = 200
+ZERO_WIDTH = {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"}
+APOSTROPHES = {"\u2019", "\u2018", "\u02bc"}
 
 
 def normalize(message):
-    lowered = message.lower().replace("’", "'").replace("‘", "'").replace("ʼ", "'")
-    return INLINE_CODE.sub(" ", FENCE.sub(" ", lowered))
+    chars = []
+    for c in unicodedata.normalize("NFC", message):
+        if c in APOSTROPHES:
+            c = "'"
+        elif c in ZERO_WIDTH:
+            continue
+        elif c == "\n":
+            pass
+        elif c.isspace():
+            c = " "
+        chars.append(c.lower())
+    text = "".join(chars)
+    return INLINE_CODE.sub(" ", FENCE.sub(" ", text))
 
 
 def negated(text, start, negators):
-    head = text[:start]
-    cut = max(head.rfind(ch) for ch in ".!?\n")
-    sentence = head[cut + 1:]
-    words = [w.strip("".join(c for c in w if not (c.isalnum() or c == "'"))) for w in WORD_SPLIT.split(sentence) if w]
-    words = [w.strip() for w in words][-3:]
-    return any(w in negators or w.endswith("n't") for w in words)
+    window = text[max(0, start - NEGATION_WINDOW_CHARS):start]
+    cut = max(window.rfind(ch) for ch in ".!?\n")
+    sentence = window[cut + 1:]
+    words = [w for w in WORD_SPLIT.split(sentence) if w][-3:]
+    for word in words:
+        trimmed = word.strip("".join(c for c in word if not (c.isalnum() or c == "'")))
+        if trimmed in negators or trimmed.endswith("n't"):
+            return True
+    return False
 
 
 def next_word(text, end):
-    match = re.search(r"[^\W_]+|[0-9]+", text[end:])
+    match = re.search(r"[A-Za-z0-9]+", text[end:])
     return match.group(0) if match else None
 
 

@@ -1,11 +1,12 @@
 //! Calibration earned from outcomes.
 //!
-//! Pairs every recorded `Prediction` trace with the latest `Outcome` trace that resolves it
-//! (written by a non-model principal) and reports, per engine and question family:
-//! Brier score, expected calibration error over 5 equal-width bins, accuracy, and base rate.
-//! A family counts as calibrated only once it has at least [`MIN_OUTCOMES`] resolved predictions.
+//! Pairs every recorded `Prediction` trace with the latest *active* `Outcome` trace that resolves
+//! it (written by a non-model principal; purged or superseded outcomes do not count) and reports,
+//! per engine and question family: Brier score, expected calibration error over 5 equal-width
+//! bins, accuracy or base rate, and how many predictions carried no probability at all.
+//! A family counts as calibrated only once it has at least [`MIN_OUTCOMES`] scored predictions.
 use crate::ledger::MemoryStore;
-use crate::trace::{PredictionRecord, TraceKind};
+use crate::trace::{PredictionRecord, TraceKind, TraceStatus};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -25,7 +26,10 @@ pub struct FamilyCalibration {
     pub engine: String,
     pub family: String,
     pub answer_kind: String,
+    /// Resolved predictions that carried a probability.
     pub n: usize,
+    /// Resolved predictions without any reported probability (excluded from the metrics).
+    pub unscored: usize,
     /// Noul: mean (p - y)². Choice/score: multiclass Brier over the reported distribution.
     pub brier: f64,
     /// Brier of always predicting the observed base rate (noul only; lower is better).
@@ -47,16 +51,20 @@ pub struct CalibrationReport {
 
 struct Pair<'a> {
     prediction: &'a PredictionRecord,
+    p: f64,
     observed: String,
 }
 
 impl MemoryStore {
     pub fn calibration(&self, family: Option<&str>) -> CalibrationReport {
-        // Latest outcome per prediction id.
+        // Latest active outcome per prediction id.
         let mut outcomes: BTreeMap<&str, (u64, &str)> = BTreeMap::new();
         for entry in self.all() {
             let trace = &entry.trace;
-            if trace.kind != TraceKind::Outcome || trace.is_model_authored() {
+            if entry.status != TraceStatus::Active
+                || trace.kind != TraceKind::Outcome
+                || trace.is_model_authored()
+            {
                 continue;
             }
             if let Some(outcome) = &trace.outcome {
@@ -69,7 +77,8 @@ impl MemoryStore {
             }
         }
 
-        let mut groups: BTreeMap<(String, String, String), Vec<Pair>> = BTreeMap::new();
+        type Key = (String, String, String);
+        let mut groups: BTreeMap<Key, (Vec<Pair>, usize)> = BTreeMap::new();
         let mut unresolved = 0;
         for entry in self.all() {
             let trace = &entry.trace;
@@ -79,26 +88,31 @@ impl MemoryStore {
             if family.is_some_and(|f| f != prediction.family) {
                 continue;
             }
-            match outcomes.get(trace.id.as_str()) {
-                Some((_, observed)) => groups
-                    .entry((
-                        prediction.engine.clone(),
-                        prediction.family.clone(),
-                        prediction.answer_kind.clone(),
-                    ))
-                    .or_default()
-                    .push(Pair {
-                        prediction,
-                        observed: observed.trim().to_string(),
-                    }),
-                None => unresolved += 1,
+            let Some((_, observed)) = outcomes.get(trace.id.as_str()) else {
+                unresolved += 1;
+                continue;
+            };
+            let group = groups
+                .entry((
+                    prediction.engine.clone(),
+                    prediction.family.clone(),
+                    prediction.answer_kind.clone(),
+                ))
+                .or_default();
+            match prediction.p {
+                Some(p) => group.0.push(Pair {
+                    prediction,
+                    p,
+                    observed: observed.trim().to_string(),
+                }),
+                None => group.1 += 1,
             }
         }
 
         let families = groups
             .into_iter()
-            .map(|((engine, family, answer_kind), pairs)| {
-                summarize(engine, family, answer_kind, &pairs)
+            .map(|((engine, family, answer_kind), (pairs, unscored))| {
+                summarize(engine, family, answer_kind, &pairs, unscored)
             })
             .collect();
         CalibrationReport {
@@ -114,34 +128,27 @@ fn summarize(
     family: String,
     answer_kind: String,
     pairs: &[Pair],
+    unscored: usize,
 ) -> FamilyCalibration {
     let n = pairs.len();
+    let denominator = n.max(1) as f64;
     let is_noul = answer_kind == "noul";
     // (reported probability, outcome as 0/1) for the ECE / reliability view.
     let points: Vec<(f64, f64)> = pairs
         .iter()
         .map(|pair| {
-            if is_noul {
-                let y = if pair.observed.eq_ignore_ascii_case("true") {
-                    1.0
-                } else {
-                    0.0
-                };
-                (pair.prediction.p, y)
+            let y = if is_noul {
+                pair.observed.eq_ignore_ascii_case("true")
             } else {
-                let y = if pair.observed == pair.prediction.value {
-                    1.0
-                } else {
-                    0.0
-                };
-                (pair.prediction.p, y)
-            }
+                pair.observed == pair.prediction.value
+            };
+            (pair.p, if y { 1.0 } else { 0.0 })
         })
         .collect();
-    let rate = points.iter().map(|(_, y)| y).sum::<f64>() / n.max(1) as f64;
+    let rate = points.iter().map(|(_, y)| y).sum::<f64>() / denominator;
     let (brier, baseline_brier) = if is_noul {
-        let brier = points.iter().map(|(p, y)| (p - y).powi(2)).sum::<f64>() / n.max(1) as f64;
-        let base = points.iter().map(|(_, y)| (rate - y).powi(2)).sum::<f64>() / n.max(1) as f64;
+        let brier = points.iter().map(|(p, y)| (p - y).powi(2)).sum::<f64>() / denominator;
+        let base = points.iter().map(|(_, y)| (rate - y).powi(2)).sum::<f64>() / denominator;
         (brier, Some(base))
     } else {
         let brier = pairs
@@ -150,7 +157,7 @@ fn summarize(
                 let probabilities = &pair.prediction.probabilities;
                 if probabilities.is_empty() {
                     let hit = pair.observed == pair.prediction.value;
-                    (pair.prediction.p - if hit { 1.0 } else { 0.0 }).powi(2)
+                    (pair.p - if hit { 1.0 } else { 0.0 }).powi(2)
                 } else {
                     let mut sum: f64 = probabilities
                         .iter()
@@ -163,7 +170,7 @@ fn summarize(
                 }
             })
             .sum::<f64>()
-            / n.max(1) as f64;
+            / denominator;
         (brier, None)
     };
 
@@ -181,7 +188,7 @@ fn summarize(
         }
         let mean_p = members.iter().map(|(p, _)| p).sum::<f64>() / members.len() as f64;
         let observed_rate = members.iter().map(|(_, y)| y).sum::<f64>() / members.len() as f64;
-        ece += members.len() as f64 / n as f64 * (mean_p - observed_rate).abs();
+        ece += members.len() as f64 / denominator * (mean_p - observed_rate).abs();
         bins.push(CalibrationBin {
             range: [lo, hi],
             n: members.len(),
@@ -195,6 +202,7 @@ fn summarize(
         family,
         answer_kind,
         n,
+        unscored,
         brier,
         baseline_brier,
         ece,

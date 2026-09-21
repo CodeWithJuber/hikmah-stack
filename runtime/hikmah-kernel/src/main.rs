@@ -8,7 +8,7 @@ use hikmah_kernel::hook::{run_stop_hook_with, DEFAULT_ENGINE_THRESHOLD};
 use hikmah_kernel::planner::{plan, PlanProblem};
 use hikmah_kernel::policy::KernelPolicy;
 use hikmah_kernel::recall::RecallQuery;
-use hikmah_kernel::trace::{OutcomeRecord, PrivacyClass, Trace, TraceKind};
+use hikmah_kernel::trace::{parse_deadline, OutcomeRecord, PrivacyClass, Trace, TraceKind};
 use hikmah_kernel::validate::validate_repo;
 use hikmah_kernel::{KernelError, MemoryStore, Result};
 use serde_json::json;
@@ -118,6 +118,10 @@ enum Command {
         store: PathBuf,
         #[arg(long)]
         expect_head: Option<String>,
+        /// Accept the current ledger as the new head after a deliberate repair (writes are
+        /// refused while the ledger and its head file disagree).
+        #[arg(long)]
+        reset_head: bool,
     },
     Plan {
         #[arg(long)]
@@ -215,10 +219,12 @@ fn select_engine(name: &str) -> Result<Box<dyn DecisionEngine>> {
 fn jev_engine(timeout_ms: Option<u64>) -> Result<Box<dyn DecisionEngine>> {
     let mut engine = hikmah_kernel::jev::JevEngine::from_env()
         .ok_or_else(|| KernelError::Invalid("TYPESAFE_API_KEY is not set".into()))?;
-    if let Some(ms) = timeout_ms {
-        if std::env::var("HIKMAH_JEV_TIMEOUT_MS").is_err() {
-            engine = engine.with_timeout(std::time::Duration::from_millis(ms));
-        }
+    if let Some(cap_ms) = timeout_ms {
+        // The hook must finish well inside the host's timeout, whatever the environment says.
+        let capped = engine
+            .timeout()
+            .min(std::time::Duration::from_millis(cap_ms));
+        engine = engine.with_timeout(capped);
     }
     Ok(Box::new(engine))
 }
@@ -228,56 +234,6 @@ fn jev_engine(_timeout_ms: Option<u64>) -> Result<Box<dyn DecisionEngine>> {
     Err(KernelError::Invalid(
         "this hikmah binary was built without the `jev` feature".into(),
     ))
-}
-
-/// Parse a deadline: epoch ms, `+<n>h`, `+<n>d`, or `YYYY-MM-DD[THH:MM[:SS]][Z]` in UTC.
-fn parse_deadline(value: &str, now_ms: u64) -> Result<u64> {
-    let v = value.trim();
-    let invalid = || KernelError::Invalid(format!("unrecognized deadline: {value}"));
-    if let Some(rest) = v.strip_prefix('+') {
-        let (number, unit) = rest.split_at(rest.len().saturating_sub(1));
-        let n: u64 = number.parse().map_err(|_| invalid())?;
-        let ms = match unit {
-            "h" => n.saturating_mul(3_600_000),
-            "d" => n.saturating_mul(86_400_000),
-            _ => return Err(invalid()),
-        };
-        return Ok(now_ms.saturating_add(ms));
-    }
-    if v.chars().all(|c| c.is_ascii_digit()) {
-        return v.parse().map_err(|_| invalid());
-    }
-    let v = v.trim_end_matches('Z');
-    let (date, time) = v.split_once('T').unwrap_or((v, "00:00:00"));
-    let d: Vec<i64> = date
-        .split('-')
-        .map(|p| p.parse().map_err(|_| invalid()))
-        .collect::<Result<_>>()?;
-    let t: Vec<i64> = time
-        .split(':')
-        .map(|p| p.parse().map_err(|_| invalid()))
-        .collect::<Result<_>>()?;
-    if d.len() != 3 || !(1..=3).contains(&t.len()) {
-        return Err(invalid());
-    }
-    let (y, m, day) = (d[0], d[1], d[2]);
-    let (hh, mm, ss) = (t[0], *t.get(1).unwrap_or(&0), *t.get(2).unwrap_or(&0));
-    if !(1..=12).contains(&m) || !(1..=31).contains(&day) || hh > 23 || mm > 59 || ss > 60 {
-        return Err(invalid());
-    }
-    // Days from civil (Howard Hinnant's algorithm), UTC.
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    let secs = days * 86_400 + hh * 3_600 + mm * 60 + ss;
-    if secs < 0 {
-        return Err(invalid());
-    }
-    Ok(secs as u64 * 1_000)
 }
 
 fn run() -> Result<()> {
@@ -369,8 +325,17 @@ fn run() -> Result<()> {
             let memory = MemoryStore::open_existing(store, policy())?;
             print_json(&memory.consolidation_proposals())?;
         }
-        Command::VerifyLedger { store, expect_head } => {
-            let memory = MemoryStore::open_existing(store, policy())?;
+        Command::VerifyLedger {
+            store,
+            expect_head,
+            reset_head,
+        } => {
+            let mut memory = MemoryStore::open_existing(store, policy())?;
+            if reset_head {
+                let head = memory.reset_head()?;
+                print_json(&json!({"head_reset": head}))?;
+                return Ok(());
+            }
             let report = memory.verify_report(expect_head.as_deref())?;
             print_json(&report)?;
             if !report.ok {

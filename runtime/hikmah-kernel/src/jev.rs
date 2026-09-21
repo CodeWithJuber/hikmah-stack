@@ -137,8 +137,9 @@ impl JevEngine {
         self
     }
 
+    /// Total time budget including retries, clamped to 100 ms..=60 s.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.timeout = timeout.clamp(Duration::from_millis(100), Duration::from_secs(60));
         self
     }
 
@@ -194,7 +195,9 @@ impl JevEngine {
 
     fn post_with_retries(&self, body: &Value) -> Result<Value> {
         let url = format!("{}/v1/systemone", self.base_url);
-        let deadline = Instant::now() + self.timeout;
+        let deadline = Instant::now()
+            .checked_add(self.timeout)
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(60));
         let mut attempt = 0_u32;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());

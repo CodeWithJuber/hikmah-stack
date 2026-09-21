@@ -268,3 +268,118 @@ fn sensitive_traces_stay_out_of_recall_under_the_default_policy() {
         .recall(&RecallQuery::new("patient allergy"))
         .is_empty());
 }
+
+#[test]
+fn concurrent_creation_of_a_new_store_loses_nothing() {
+    for round in 0..20 {
+        let path = temp_store(&format!("create-{round}"));
+        let threads: Vec<_> = (0..6)
+            .map(|t| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let mut store = MemoryStore::open(&path, KernelPolicy::default()).unwrap();
+                    store
+                        .remember(Trace::new(
+                            TraceKind::Observation,
+                            format!("creator {t}"),
+                            format!("creator-{t}"),
+                        ))
+                        .unwrap();
+                })
+            })
+            .collect();
+        for handle in threads {
+            handle.join().unwrap();
+        }
+        let store = open(&path);
+        assert_eq!(store.record_count(), 6, "round {round}");
+        assert!(store.verify_report(None).unwrap().ok);
+    }
+}
+
+#[test]
+fn a_reader_opened_before_a_write_does_not_raise_a_false_alarm() {
+    let path = temp_store("stale-reader");
+    let mut writer = open(&path);
+    writer.remember(note("first")).unwrap();
+    let reader = open(&path);
+    writer.remember(note("second")).unwrap();
+    let report = reader.verify_report(None).unwrap();
+    assert!(report.ok, "{report:?}");
+}
+
+#[test]
+fn writes_are_refused_after_truncation_until_the_head_is_reset() {
+    let path = temp_store("refuse");
+    let mut store = open(&path);
+    for i in 0..3 {
+        store.remember(note(&format!("event {i}"))).unwrap();
+    }
+    drop(store);
+    let text = fs::read_to_string(&path).unwrap();
+    let first: Vec<&str> = text.lines().take(1).collect();
+    fs::write(&path, format!("{}\n", first[0])).unwrap();
+
+    let mut store = open(&path);
+    assert!(matches!(
+        store.remember(note("papering over")),
+        Err(KernelError::Integrity { .. })
+    ));
+    assert!(!open(&path).verify_report(None).unwrap().ok);
+
+    store.reset_head().unwrap();
+    store.remember(note("after an explicit reset")).unwrap();
+    assert!(open(&path).verify_report(None).unwrap().ok);
+}
+
+#[test]
+fn torn_tail_inside_a_multibyte_character_is_repaired() {
+    let path = temp_store("utf8-torn");
+    let mut store = open(&path);
+    store.remember(note("بسم الله الرحمن الرحيم")).unwrap();
+    drop(store);
+    let text = fs::read(&path).unwrap();
+    let line = text.clone();
+    let cut = line
+        .iter()
+        .position(|&b| b >= 0xd8)
+        .expect("arabic bytes present")
+        + 1;
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    file.write_all(&line[..cut]).unwrap();
+    drop(file);
+
+    let mut store = open(&path);
+    assert_eq!(store.record_count(), 1);
+    store.remember(note("after the torn write")).unwrap();
+    assert!(open(&path).verify_report(None).unwrap().ok);
+}
+
+#[test]
+fn non_json_whitespace_tail_is_treated_as_torn() {
+    let path = temp_store("nbsp");
+    let mut store = open(&path);
+    store.remember(note("first")).unwrap();
+    drop(store);
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    file.write_all("\u{a0}".as_bytes()).unwrap();
+    drop(file);
+    let mut store = open(&path);
+    store.remember(note("second")).unwrap();
+    let reopened = open(&path);
+    assert_eq!(reopened.record_count(), 2);
+    assert!(reopened.verify_report(None).unwrap().ok);
+}
+
+#[test]
+fn an_unreadable_head_file_is_reported_not_fatal() {
+    let path = temp_store("bad-head");
+    let mut store = open(&path);
+    store.remember(note("first")).unwrap();
+    let head_path = store.head_path();
+    drop(store);
+    fs::write(&head_path, b"").unwrap();
+    let report = open(&path).verify_report(None).unwrap();
+    assert!(!report.ok);
+    assert!(report.warnings.iter().any(|w| w.contains("unreadable")));
+}

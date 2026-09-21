@@ -9,12 +9,12 @@ It sits beside the text-shaped `ProposalEngine`, not in place of it. Text propos
 | Rule | Where it is enforced |
 |---|---|
 | Engines propose, the kernel admits | `admit()` checks every answer against the question that was asked. `AdmittedDecision` is `#[non_exhaustive]`, so code outside the kernel crate cannot construct one. |
-| No silent repair | Any violation rejects the **whole** response: an extra answer, an unknown option, a wrong type, a probability outside [0, 1], a distribution that does not sum to 1 (±0.02), an out-of-range score, a malformed answer, or a request-id mismatch. Every answer then becomes an explicit `abstain` and the reason is kept in `rejected`. |
+| No silent repair | Any violation rejects the **whole** response: an extra answer, an unknown option, a wrong type, a probability outside [0, 1], a distribution whose sum is off by more than max(0.02, 0.005 × options), a choice that is not the most probable option of its own distribution, a non-canonical score key, a score that disagrees with its distribution, an out-of-range score, a malformed answer, or a request-id mismatch. Every answer then becomes an explicit `abstain` and the reason is kept in `rejected`. |
 | Unknown is a state | Unanswered questions become `abstain`. `NoEngine` abstains on everything, so callers must handle unknown. |
-| Credentials never leave | `ask()` refuses state that matches common credential shapes before any engine is called. It uses a linear-time matcher (`secrets.rs`). |
+| Credentials never leave | `ask()` refuses a request whose state, instructions, options, or level labels match common credential shapes, before any engine is called. It uses a linear-time matcher (`secrets.rs`). |
 | Confidence is earned | Engine probabilities pass through as reported, with `calibrated: false`. Calibration comes from recorded outcomes (`hikmah calibration`). |
 | Model output is not memory | Recorded answers become `prediction` traces with a `model:` source. They are never verified, cannot supersede, stay out of default recall, and are not consolidation evidence. |
-| Only non-model principals resolve predictions | An `outcome` trace from a `model:` source is rejected. |
+| Only non-model principals resolve predictions | An `outcome` trace from a `model:` source is rejected, and the observed value must belong to the prediction's answer space. Purged or superseded outcomes do not count. A prediction without any reported probability is stored with `p: null` and counted as `unscored`, never given an invented probability. |
 | Hard blocks are never averaged away | Engines can estimate decision-criterion scores. `hard_blocks` stay caller- and kernel-owned, and blocked options always rank last. |
 
 ## Question types
@@ -71,7 +71,7 @@ Environment:
 | `TYPESAFE_API_KEY` | unset | Required for `--engine jev`. Never logged. |
 | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | Alternate endpoint. |
 | `HIKMAH_JEV_MODEL` | `jev-latest` | Model route. |
-| `HIKMAH_JEV_TIMEOUT_MS` | 5000 (3000 in the hook) | Total time budget, including retries. |
+| `HIKMAH_JEV_TIMEOUT_MS` | 5000 | Total time budget including retries, clamped to 100 ms..=60 s. The hook always caps it at 3000. |
 | `HIKMAH_HOOK_ENGINE` | unset (rules) | `jev` turns on engine mode in `hikmah hook`. |
 | `HIKMAH_HOOK_THRESHOLD` | 0.8 | Block when `P(false completion)` is at or above this value. |
 

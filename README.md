@@ -42,7 +42,7 @@ The table below separates executable evidence from architectural intent.
 | Retrieval | Deterministic relevance gate (terms or tags must match), light stemming, CJK bigrams, metadata scaling, duplicate folding; no embeddings |
 | Model integration | Typed `DecisionEngine` port with `NoEngine` and an opt-in TypeSafe Jev adapter; the text `ProposalEngine` still ships only `NoModel` |
 | Agent packaging | Portable instruction skills and thin Codex, Claude Code, and Kimi manifests |
-| Tests | 58 unit and integration tests covering every capability row; shared Truth Gate golden cases for Rust and Python |
+| Tests | 79 unit and integration tests covering every capability row; shared Truth Gate golden cases for Rust and Python |
 | Deployment | Local source/CLI use; no hosted service or public production deployment is claimed |
 
 ### What this repository does not claim
@@ -153,7 +153,7 @@ cargo run -p hikmah-kernel -- fulfill --id <commitment-trace-id>
 cargo run -p hikmah-kernel -- verify-ledger
 ```
 
-`--source` defaults to `unknown`. Use `model:<engine>` for anything a model wrote; the kernel refuses to mark such traces verified or to let them supersede others. `verify-ledger` exits non-zero when the chain, the head file, or a pinned `--expect-head` does not match.
+`--source` defaults to `unknown`. Use `model:<engine>` for anything a model wrote; the kernel refuses to mark such traces verified or to let them supersede others. `verify-ledger` exits non-zero when the chain, the head file, or a pinned `--expect-head` does not match. While they disagree, writes are refused; after a deliberate repair, `verify-ledger --reset-head` accepts the current ledger.
 
 By default, local memory is written to `.hikmah/memory.jsonl`.
 

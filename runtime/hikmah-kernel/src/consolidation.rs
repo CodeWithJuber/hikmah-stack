@@ -1,6 +1,8 @@
 use crate::claims::{normalize_key, normalize_value};
 use crate::ledger::MemoryStore;
 use crate::trace::TraceKind;
+
+const UNATTRIBUTED: &[&str] = &["", "unknown", "user"];
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -45,10 +47,18 @@ impl MemoryStore {
         for (key, values) in grouped {
             for (value, traces) in &values {
                 // Independence is judged on normalized source names, so `Config-A` and
-                // `config-a` count once.
+                // `config-a` count once. Unattributed writes (the CLI defaults `unknown`, and
+                // `user` from 3.0.0) all count as one source.
                 let sources: BTreeSet<String> = traces
                     .iter()
-                    .map(|trace| trace.provenance.source.trim().to_lowercase())
+                    .map(|trace| {
+                        let source = trace.provenance.source.trim().to_lowercase();
+                        if UNATTRIBUTED.contains(&source.as_str()) {
+                            "unattributed".to_string()
+                        } else {
+                            source
+                        }
+                    })
                     .collect();
                 let average_confidence = if traces.is_empty() {
                     0.0
