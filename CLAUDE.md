@@ -54,7 +54,12 @@ There are three layers, and each change should stay within its layer:
 
 ### Truth Gate
 
-`hook.rs` is the Stop hook. It is a narrow completion-claim check with whole-word matching, negation handling, and code spans skipped. With `HIKMAH_HOOK_ENGINE=jev` it can ask an engine instead, but it has a hard 3 s cap and falls back to the rules. `hooks/truth_gate.py` is the zero-install fallback. **It must stay behaviorally identical to `hook.rs`.** Both are tested against `hooks/truth_gate_cases.json`, so any rule change goes into both files and the shared cases. `hooks/truth_gate.sh` never compiles anything. It tries `bin/hikmah[.exe]`, then `hikmah` on PATH, then `python3`/`python`. It checks each candidate's output, and it always exits 0 with JSON.
+`hook.rs` is the Stop hook. It is a narrow completion-claim check with whole-word matching, negation handling, and code spans skipped. `HIKMAH_HOOK_ENGINE=jev` adds an engine screen:
+
+- **Question and threshold:** the engine estimates whether the completion claim would fail a test run of the change, and it blocks at `p >= 0.6` by default. Both the question wording and the threshold were measured in harness-bench (see `docs/EVIDENCE.md`). Changing either invalidates that evidence.
+- **The rules are a hard floor.** A rules block always stands; the engine can only add blocks.
+- **Limits:** the engine has a hard 3 s cap. Any engine problem leaves the rules' verdict.
+- **Explaining a decision:** `hikmah gate-explain [--batch]` prints the rules verdict, the engine p, and which path decided, through the same `evaluate_message()` the hook uses. `hooks/truth_gate.py` is the zero-install fallback. **It must stay behaviorally identical to `hook.rs`.** Both are tested against `hooks/truth_gate_cases.json`, so any rule change goes into both files and the shared cases. `hooks/truth_gate.sh` never compiles anything. It tries `bin/hikmah[.exe]`, then `hikmah` on PATH, then `python3`/`python`. It checks each candidate's output, and it always exits 0 with JSON.
 
 ### Validator and versions
 

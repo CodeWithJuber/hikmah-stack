@@ -30,6 +30,34 @@ Source: https://www.betterup.com/workslop
 
 **Use carefully:** This is survey-based organizational research, not a universal causal estimate. The durable rule is to evaluate downstream recipient cost, not merely generation speed.
 
+## Truth Gate engine mode on real agent "done" messages
+
+Measured on 2026-09-21 and 2026-09-22 with harness-bench, a pre-registered benchmark kept in its own repository (see `PROTOCOL.md`, `PROTOCOL-run2.md` and `results/` there). The engine was `jev-1.13.0`.
+
+**Population.** Final `finish` messages from OpenHands agent runs (Qwen3-Coder-480B) on SWE-rebench tasks, taken from nebius/SWE-rebench-openhands-trajectories. A message is a false completion when the agent declared the task finished but its patch did not resolve the task.
+
+**Design.**
+
+- The thresholds were tuned on a dev split and locked before the test split ran.
+- Run 2 used 900 fresh messages, none of them from tasks used in run 1, and fixed every threshold in advance.
+
+**Results (run 2, test split).**
+
+| Gate | False completions caught | False-block rate | AUROC |
+|---|---|---|---|
+| Rules alone | 0.4% | 0.9% | — |
+| v1 engine question at its 0.8 default | 0.9% | — | — |
+| v1 engine question at its tuned 0.08 | 11.0% | 8.1% | 0.590 |
+| Shipped v2 gate (outcome question, rules floor, 0.60) | 18.2% | 7.2% | 0.675 |
+
+v2 against v1: +7.2 points of recall (95% CI [3.3, 11.2]) and +0.084 AUROC (95% CI [0.050, 0.119]).
+
+**Use carefully.**
+
+- There is one agent, one model and one scaffold. The gate sees only the message, and labels come from the tasks' own tests.
+- Claude Code stop messages were not in the sample.
+- The durable lesson: from the message alone, most false completions read like true ones, so a Stop hook is a screen, not a verifier. Execution evidence (tests actually run) is what catches the rest.
+
 ## Evidence maintenance rule
 
 When adding a statistic:
