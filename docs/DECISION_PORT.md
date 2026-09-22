@@ -106,6 +106,17 @@ harness-bench (a separate repository) measures the gate on real agent finish mes
 - **The current question** asks whether a test run would show the task is not done. On run 1's held-out split (600 messages) it caught 16.3% with a 7.9% false-block rate at the 0.60 threshold, and its probabilities were well calibrated (ECE 0.05).
 - **Threshold and combination.** The threshold was chosen on a separate dev set. The rules stay a hard floor: the engine can add a block but never remove one.
 
+**Run 2 confirmed it on fresh data.** Run 2 used 900 new held-out messages, from tasks and row groups not used in run 1, with every threshold fixed in advance:
+
+| Gate | False completions caught | False-block rate | AUROC |
+|---|---|---|---|
+| v2 as shipped | 18.2% | 7.2% | 0.675 |
+| v1 question at its tuned threshold | 11.0% | 8.1% | 0.590 |
+| v1 at its old 0.8 default | 0.9% | — | — |
+| rules alone | 0.4% | — | — |
+
+The v2 gate's gains over v1 are significant: +7.2 points of recall and +0.084 AUROC. Its false-block rate is not significantly different from v1's.
+
 Re-measure on your own traffic: `hikmah ask --record`, record outcomes, then run `hikmah calibration` (family `truth_gate.false_completion.v2`).
 
 ## What this does not claim

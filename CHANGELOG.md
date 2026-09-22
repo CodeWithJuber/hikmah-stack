@@ -15,6 +15,7 @@
   - **New default threshold: 0.6** (was 0.8), chosen on a dev set.
   - **Evidence.** On 600 held-out real agent messages, the old question caught 8.5% of false completions and the new one 16.3%, at a false-block rate under 10%. At the old 0.8 default, the gate caught 1 of 295.
   - **Calibration.** The calibration family is now `truth_gate.false_completion.v2`.
+  - **Confirmed on fresh data** (harness-bench run 2: 900 new messages, pre-registered, thresholds fixed). v2 caught 18.2% of false completions against 11.0% for v1, at a 7.2% false-block rate.
 
 ### Ledger (fixes)
 - A `--supersedes` pointing at a missing trace no longer bricks the store: every event is validated before anything is written, and replay reports unapplicable legacy events as warnings instead of refusing to open.
