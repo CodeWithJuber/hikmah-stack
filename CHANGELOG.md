@@ -9,6 +9,12 @@
 - Added **prediction and outcome traces** and `hikmah calibration` (Brier, base-rate Brier, ECE, observed rate per engine and family). Model-authored traces cannot be verified, supersede, or resolve predictions. Outcomes must be a value from the prediction's answer space; purged or superseded outcomes do not count; predictions without any reported probability are recorded as unknown and counted separately, never given an invented value.
 - Added CLI commands `ask`, `outcome`, `calibration`, `fulfill`, and `purge`, plus `remember --deadline/--authority/--locator`, `recall --kind`, `verify-ledger --expect-head`, and `decide --engine` (engine estimates count toward ranking, never toward evidence coverage).
 - The Truth Gate can use a decision engine (`HIKMAH_HOOK_ENGINE=jev`) and falls back to the deterministic rules on any engine problem. `hikmah gate-explain [--batch]` prints the rules verdict, engine probability, threshold, and deciding path through the same code path as the hook, so the gate can be benchmarked and its threshold tuned.
+- **Truth Gate engine mode v2** (measured in harness-bench):
+  - **New question.** The engine now estimates whether the completion claim would fail a test run of the change, instead of whether the message admits unfinished work.
+  - **Rules as a hard floor.** The rules block on their own, and the engine can only add blocks.
+  - **New default threshold: 0.6** (was 0.8), chosen on a dev set.
+  - **Evidence.** On 600 held-out real agent messages, the old question caught 8.5% of false completions and the new one 16.3%, at a false-block rate under 10%. At the old 0.8 default, the gate caught 1 of 295.
+  - **Calibration.** The calibration family is now `truth_gate.false_completion.v2`.
 
 ### Ledger (fixes)
 - A `--supersedes` pointing at a missing trace no longer bricks the store: every event is validated before anything is written, and replay reports unapplicable legacy events as warnings instead of refusing to open.

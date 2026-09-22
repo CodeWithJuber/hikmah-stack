@@ -79,9 +79,18 @@ fn engine_mode_uses_the_engine_and_falls_back_to_rules() {
     assert_eq!(verdict["decision"], "block");
     assert!(verdict["reason"].as_str().unwrap().contains("p=0.93"));
 
+    // A low engine probability cannot lift a rules block...
     let input = json!({"last_assistant_message": "Done. TODO: add tests"}).to_string();
     let mut out = Vec::new();
     run_stop_hook_with(input.as_bytes(), &mut out, Some(&engine(0.2)), 0.8).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&out).unwrap()["decision"],
+        "block"
+    );
+    // ...and a clean message is allowed when the engine is below the threshold.
+    let clean = json!({"last_assistant_message": "Fixed the parser; all tests pass."}).to_string();
+    let mut out = Vec::new();
+    run_stop_hook_with(clean.as_bytes(), &mut out, Some(&engine(0.2)), 0.8).unwrap();
     assert_eq!(serde_json::from_slice::<Value>(&out).unwrap(), json!({}));
 
     let abstaining = StaticEngine {

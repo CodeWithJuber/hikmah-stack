@@ -60,8 +60,9 @@ hikmah calibration
 # Let an engine estimate missing criteria for options that have a description.
 TYPESAFE_API_KEY=... hikmah decide --frame examples/decision-frame.json --engine jev
 
-# Truth Gate with Jev as the judge (falls back to the rules on any engine problem).
-HIKMAH_HOOK_ENGINE=jev HIKMAH_HOOK_THRESHOLD=0.8 TYPESAFE_API_KEY=... hikmah hook < stop-event.json
+# Truth Gate with Jev as a second screen. The rules still block on their own; the engine can add
+# a block when P(the claim would fail verification) >= threshold. Engine problems leave the rules.
+HIKMAH_HOOK_ENGINE=jev TYPESAFE_API_KEY=... hikmah hook < stop-event.json
 
 # Same code path, explained: rules verdict, engine probability, threshold, and which path decided.
 # --batch reads {"id", "last_assistant_message"} JSON lines and writes one verdict per line.
@@ -78,7 +79,7 @@ Environment:
 | `HIKMAH_JEV_MODEL` | `jev-latest` | Model route. |
 | `HIKMAH_JEV_TIMEOUT_MS` | 5000 | Total time budget including retries, clamped to 100 ms..=60 s. The hook always caps it at 3000. |
 | `HIKMAH_HOOK_ENGINE` | unset (rules) | `jev` turns on engine mode in `hikmah hook`. |
-| `HIKMAH_HOOK_THRESHOLD` | 0.8 | Block when `P(false completion)` is at or above this value. |
+| `HIKMAH_HOOK_THRESHOLD` | 0.6 | The engine adds a block when `P(the completion claim would fail verification)` is at or above this value. Chosen and confirmed in harness-bench (see below). |
 
 ## Decision frames with engine estimates
 
@@ -96,8 +97,19 @@ Options may carry a free-text `description`. With `--engine`, the kernel asks on
 - Tests inject a transport and replay a response captured from `jev-1.13.0`. A live round trip is available as an ignored test: `HIKMAH_LIVE_JEV=1 TYPESAFE_API_KEY=... cargo test --test jev -- --ignored`.
 - Build without network code: `cargo build --no-default-features`.
 
+## Truth Gate engine mode: measured, not assumed
+
+harness-bench (a separate repository) measures the gate on real agent finish messages whose labels come from execution: did the agent's patch actually resolve the task?
+
+- **The rules alone** almost never fire on these messages. False completions do not say TODO; they claim success.
+- **The first engine question** asked whether the message admits unfinished work. It caught 8.5% of false completions.
+- **The current question** asks whether a test run would show the task is not done. On run 1's held-out split (600 messages) it caught 16.3% with a 7.9% false-block rate at the 0.60 threshold, and its probabilities were well calibrated (ECE 0.05).
+- **Threshold and combination.** The threshold was chosen on a separate dev set. The rules stay a hard floor: the engine can add a block but never remove one.
+
+Re-measure on your own traffic: `hikmah ask --record`, record outcomes, then run `hikmah calibration` (family `truth_gate.false_completion.v2`).
+
 ## What this does not claim
 
 - The kernel does not verify any engine's claimed accuracy or calibration. It measures calibration only from outcomes you record, and marks a family calibrated only after 50 resolved predictions.
-- The Truth Gate threshold (0.8) is a configuration choice, not a measured operating point.
+- The Truth Gate engine mode is a screen, not a verifier. On real agent "done" messages it catches a minority of false completions (about one in six in harness-bench run 1, at a false-block rate under 10%), because most false completions read exactly like true ones. Execution evidence (tests actually run) is what catches the rest.
 - The port does not make an engine's output durable truth. Promotion from a prediction to a belief still needs a non-model principal.

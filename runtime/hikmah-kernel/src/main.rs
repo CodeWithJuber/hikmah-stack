@@ -183,7 +183,7 @@ enum Command {
         family: Option<String>,
     },
     /// Truth Gate Stop hook. Engine via HIKMAH_HOOK_ENGINE=jev (needs TYPESAFE_API_KEY);
-    /// threshold via HIKMAH_HOOK_THRESHOLD (default 0.8).
+    /// threshold via HIKMAH_HOOK_THRESHOLD (default 0.6, measured in harness-bench).
     Hook,
     /// Explain the Truth Gate decision (rules verdict, engine probability, path) for a stop event
     /// on stdin, or for JSON lines with `--batch`. Same engine settings and code path as `hook`.
