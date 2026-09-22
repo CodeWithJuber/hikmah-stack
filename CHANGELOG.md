@@ -1,6 +1,13 @@
 
 # Changelog
 
+## Unreleased
+
+Fixes for gaps found by the research-to-implementation audit.
+
+### Memory
+- **Memory refuses credentials.** Trace validation runs the credential detector already used for outbound engine requests over content, tags, claim key and value, source, and locator. `remember`, `outcome`, `ask --record`, and every other append path reject a match with an `invalid input` error that names the field without echoing the value. Stores that already contain such text still open; only new writes are checked.
+
 ## 3.1.0 - 2026-09-21
 
 ### Typed decision port and Jev

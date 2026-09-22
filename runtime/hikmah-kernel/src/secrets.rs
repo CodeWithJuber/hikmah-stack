@@ -1,4 +1,5 @@
-//! Conservative credential detection for text about to leave the machine (decision engines).
+//! Conservative credential detection for text about to leave the machine (decision engines) and
+//! for every trace before it is written to memory (`Trace::validate`).
 //!
 //! Uses the `regex` crate, whose matching time is linear in the input, so a crafted input cannot
 //! stall a hook. This is a guard rail for well-known credential shapes, not a DLP system.

@@ -383,3 +383,49 @@ fn an_unreadable_head_file_is_reported_not_fatal() {
     assert!(!report.ok);
     assert!(report.warnings.iter().any(|w| w.contains("unreadable")));
 }
+
+#[test]
+fn credentials_are_refused_in_every_field_before_anything_is_written() {
+    let path = temp_store("secrets");
+    let mut store = open(&path);
+    store.remember(note("baseline")).unwrap();
+    let before = line_count(&path);
+    let token = "ghp_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
+    let mut cases: Vec<(&str, Trace)> = Vec::new();
+    cases.push(("content", note("DB_PASSWORD=hunter2hunter2")));
+    let mut tagged = note("deploy notes");
+    tagged.tags = vec!["ops".into(), token.into()];
+    cases.push(("tag", tagged));
+    let mut claim_key = note("api settings");
+    claim_key.claim_key = Some(format!("token {token}"));
+    claim_key.claim_value = Some("set".into());
+    cases.push(("claim_key", claim_key));
+    let mut claim_value = note("database url");
+    claim_value.claim_key = Some("db.url".into());
+    claim_value.claim_value = Some("postgres://app:Pr0dPassw0rd@db.internal/app".into());
+    cases.push(("claim_value", claim_value));
+    let mut locator = note("pulled from the shared doc");
+    locator.provenance.locator = Some(format!("https://docs.example.com/?access_token={token}"));
+    cases.push(("locator", locator));
+    let mut source = note("imported");
+    source.provenance.source = "postgres://svc:SuperSecret1@db.internal/app".into();
+    cases.push(("source", source));
+
+    for (field, trace) in cases {
+        match store.remember(trace) {
+            Err(KernelError::Invalid(message)) => {
+                assert!(message.contains(field), "{field}: {message}");
+                assert!(message.contains("secret"), "{message}");
+                assert!(!message.contains(token) && !message.contains("hunter2"));
+            }
+            other => panic!("{field}: expected Invalid, got {other:?}"),
+        }
+    }
+    assert_eq!(line_count(&path), before, "nothing may be written");
+
+    // Talking about passwords is not a password.
+    store
+        .remember(note("the password field should be hashed with argon2"))
+        .unwrap();
+    open(&path).verify().unwrap();
+}

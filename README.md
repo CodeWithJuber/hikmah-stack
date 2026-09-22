@@ -42,7 +42,7 @@ The table below separates executable evidence from architectural intent.
 | Retrieval | Deterministic relevance gate (terms or tags must match), light stemming, CJK bigrams, metadata scaling, duplicate folding; no embeddings |
 | Model integration | Typed `DecisionEngine` port with `NoEngine` and an opt-in TypeSafe Jev adapter; the text `ProposalEngine` still ships only `NoModel` |
 | Agent packaging | Portable instruction skills and thin Codex, Claude Code, and Kimi manifests |
-| Tests | 83 unit and integration tests covering every capability row; shared Truth Gate golden cases for Rust and Python |
+| Tests | 84 unit and integration tests (plus 1 ignored live Jev test) covering every capability row; shared Truth Gate golden cases for Rust and Python |
 | Deployment | Local source/CLI use; no hosted service or public production deployment is claimed |
 
 ### What this repository does not claim
@@ -297,6 +297,7 @@ Hikmah ships no credentials, privileged remote service, or external database con
 - The reference store is local JSONL.
 - Hash chaining provides tamper evidence; it does not encrypt content or provide access control.
 - `sensitive` persistence is refused by default.
+- A trace whose text looks like a credential (common token, key, and password shapes; not a DLP system) is refused before it is written.
 - The append-only reference ledger is not a complete right-to-delete implementation.
 - A production system handling sensitive data needs an encrypted, access-controlled, deletion-capable storage adapter and an explicit retention policy.
 - The narrow Truth Gate does not fact-check arbitrary model output.
