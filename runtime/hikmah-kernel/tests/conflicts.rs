@@ -170,3 +170,24 @@ fn near_identical_wording_does_not_fold_a_competing_claim_away() {
     assert_eq!(west_result.conflicts.len(), 2);
     assert!(west_result.conflicts.contains(&east));
 }
+
+#[test]
+fn a_purged_correction_is_not_named_as_the_successor() {
+    let mut s = MemoryStore::open(temp_store("purged-successor"), KernelPolicy::default()).unwrap();
+    let mut old = Trace::new(TraceKind::Belief, "The car color is blue", "owner");
+    old.claim_key = Some("car.color".into());
+    old.claim_value = Some("blue".into());
+    let old = s.remember(old).unwrap().0.id;
+    let mut fix = Trace::new(TraceKind::Correction, "The car color is red", "owner");
+    fix.claim_key = Some("car.color".into());
+    fix.claim_value = Some("red".into());
+    fix.supersedes = Some(old.clone());
+    let fix = s.remember(fix).unwrap().0.id;
+    s.purge(&fix, "entered on the wrong record").unwrap();
+
+    let mut history = RecallQuery::new("car color");
+    history.include_superseded = true;
+    let results = s.recall(&history);
+    let replaced = results.iter().find(|r| r.trace.id == old).unwrap();
+    assert_eq!(replaced.superseded_by, None, "points at a purged trace");
+}

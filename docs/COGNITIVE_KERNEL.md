@@ -60,7 +60,7 @@ Decision frames use explicit criteria, weights, evidence coverage, hard blocks, 
 
 - **Score interval.** Each option gets `score_interval = [lo, hi]`. `lo` is the weighted score with every unscored criterion at the scale minimum, and `hi` is the same with each at the maximum. This is interval arithmetic with no invented prior.
 - **Ranking.** Admissible options rank by `lo`, then `hi`, then reversibility, then name. An option with one excellent score and several unknowns cannot outrank a fully evidenced option whose guaranteed score is higher.
-- **Decisiveness.** `decisive` is true only when the recommended option's `lo` is at least every other admissible option's `hi`, so measuring the unknowns could not change the winner.
+- **Decisiveness.** `decisive` uses `evidence_interval`, the same interval with model-estimated criteria treated as unknown. It is true only when the recommended option's evidence `lo` is strictly greater than every other admissible option's evidence `hi`. Then neither measuring the unknowns nor an engine estimate proving wrong could change the winner. Exact ties are not decisive.
 - **Hard blocks and reversibility.** Hard blocks still rank last. The reversibility preference applies to `lo`.
 
 ### 7. Model Port

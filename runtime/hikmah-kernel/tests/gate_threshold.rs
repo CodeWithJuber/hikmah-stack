@@ -229,3 +229,61 @@ fn the_cli_hook_records_nothing_without_an_engine() {
     assert_eq!(verdict["decision"], "block");
     assert!(!store.exists(), "rules-only verdicts are not predictions");
 }
+
+#[test]
+fn a_threshold_that_catches_nothing_is_never_recommended() {
+    // The only false completion scores below every true one: any threshold that blocks
+    // anything blocks only true completions, so turning the engine off is strictly better.
+    let store = temp_store("gate-threshold-zero-recall");
+    resolve(
+        &store,
+        &rows(&[(0.05, true, 1), (0.9, false, 1), (0.1, false, 48)]),
+    );
+    let memory = MemoryStore::open_existing(&store, KernelPolicy::default()).unwrap();
+    let report = memory.gate_threshold(0.10).unwrap();
+    assert_eq!(report.threshold, None, "{report:?}");
+}
+
+#[test]
+fn purged_predictions_do_not_steer_the_threshold() {
+    let store = temp_store("gate-threshold-purged");
+    resolve(&store, &rows(&[(0.2, false, 40), (0.8, true, 10)]));
+    let mut memory = MemoryStore::open_existing(&store, KernelPolicy::default()).unwrap();
+    assert_eq!(memory.gate_threshold(0.10).unwrap().n, 50);
+    let victim = predictions(&store)[0].id.clone();
+    memory.purge(&victim, "recorded by mistake").unwrap();
+    // 49 resolved predictions remain, below the minimum, so the report is refused.
+    assert!(memory.gate_threshold(0.10).is_err());
+}
+
+#[test]
+fn a_busy_record_store_is_skipped_not_waited_on() {
+    let store = temp_store("hook-record-busy");
+    MemoryStore::open(&store, KernelPolicy::default()).unwrap();
+    let mut lock_path = store.as_os_str().to_owned();
+    lock_path.push(".lock");
+    let holder = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .unwrap();
+    holder.lock().unwrap();
+
+    let input = json!({"last_assistant_message": CLEAN}).to_string();
+    let started = std::time::Instant::now();
+    let out = run(&input, Some(&gate_engine(0.7)), Some(&store));
+    assert!(
+        started.elapsed().as_secs() < 2,
+        "the hook waited on the lock"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&out).unwrap()["decision"],
+        "block"
+    );
+    drop(holder);
+    assert!(
+        predictions(&store).is_empty(),
+        "nothing is recorded while busy"
+    );
+}

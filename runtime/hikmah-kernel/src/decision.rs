@@ -10,11 +10,15 @@
 //! - Admissible options rank by `lo` (the score they are guaranteed on the stated scores), then
 //!   by `hi`, then reversible first, then name. An option with one excellent score and three
 //!   unknowns therefore cannot outrank a fully evidenced option whose guaranteed score is higher.
-//! - `decisive` is true only when the recommended option's `lo` is at least every other
-//!   admissible option's `hi`: no resolution of the unknowns could change the winner.
+//! - `evidence_interval` is the same interval over evidence alone: model-estimated criteria
+//!   count as unknown there.
+//! - `decisive` is true only when the recommended option's evidence `lo` is strictly greater
+//!   than every other admissible option's evidence `hi`: no resolution of the unknowns, and no
+//!   engine estimate proving wrong, could change the winner. Exact ties are not decisive.
 //! - `coverage` counts only evidence-backed criteria (`scores`). Model-estimated criteria
-//!   (`model_scores`, filled through the typed decision port) are point values in the interval
-//!   but never raise coverage, so a guess never raises confidence.
+//!   (`model_scores`, filled through the typed decision port) are point values in
+//!   `score_interval`, so they can reorder the ranking, but they never raise coverage and never
+//!   make a result decisive.
 //! - `raw_score` (mean over scored criteria) and
 //!   `confidence_adjusted_score = raw_score × (0.5 + 0.5 × evidence_confidence × coverage)` are
 //!   still reported for comparison with 3.1.0; they no longer order the ranking.
@@ -68,6 +72,11 @@ pub struct RankedOption {
     pub name: String,
     /// `[lo, hi]`: the weighted score with every unscored criterion at 0 and at 1.
     pub score_interval: [f64; 2],
+    /// `[lo, hi]` over evidence alone: model-estimated criteria are unknown here, like unscored
+    /// ones. `decisive` is computed from this interval, so an engine guess can reorder options
+    /// but can never make a result look settled.
+    #[serde(default)]
+    pub evidence_interval: [f64; 2],
     pub raw_score: f64,
     pub confidence_adjusted_score: f64,
     /// `evidence_confidence × coverage`.
@@ -151,6 +160,7 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
         let mut weighted = 0.0;
         let mut scored_weight = 0.0;
         let mut evidence_weight = 0.0;
+        let mut evidence_sum = 0.0;
         let mut missing_weight = 0.0;
         let mut missing = Vec::new();
         let mut estimated = Vec::new();
@@ -169,6 +179,7 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
                     scored_weight += criterion.weight;
                     if is_evidence {
                         evidence_weight += criterion.weight;
+                        evidence_sum += score * criterion.weight;
                     } else {
                         estimated.push(criterion.id.clone());
                     }
@@ -190,6 +201,10 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
             (weighted / total_weight).clamp(0.0, 1.0),
             ((weighted + missing_weight) / total_weight).clamp(0.0, 1.0),
         ];
+        let evidence_interval = [
+            (evidence_sum / total_weight).clamp(0.0, 1.0),
+            ((evidence_sum + total_weight - evidence_weight) / total_weight).clamp(0.0, 1.0),
+        ];
         let raw_score = if scored_weight > 0.0 {
             weighted / scored_weight
         } else {
@@ -200,6 +215,7 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
         ranking.push(RankedOption {
             name: option.name.clone(),
             score_interval,
+            evidence_interval,
             raw_score,
             confidence_adjusted_score,
             evidence_confidence: confidence,
@@ -243,7 +259,8 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
         ranking
             .iter()
             .filter(|other| !other.blocked && other.name != top.name)
-            .all(|other| top.score_interval[0] >= other.score_interval[1])
+            // Strict: on an exact tie only the name tie-break separates them.
+            .all(|other| top.evidence_interval[0] > other.evidence_interval[1])
     });
     Ok(DecisionResult {
         question: frame.question.clone(),

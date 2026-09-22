@@ -205,7 +205,7 @@ fn parse_payload(buffer: &str) -> Value {
                 .expect("surrogate regex"),
             Regex::new(r#""last_assistant_message"\s*:\s*"((?:[^"\\]|\\.)*)""#)
                 .expect("message regex"),
-            Regex::new(r#""stop_hook_active"\s*:\s*(?:"true"|"1"|(?:true|1)\b)"#)
+            Regex::new(r#""stop_hook_active"\s*:\s*(?:"\s*(?i:true|1)\s*"|true\b|-?(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)(?:[eE][+-]?[0-9]+)?)"#)
                 .expect("active regex"),
         )
     });
@@ -363,6 +363,8 @@ fn record_prediction(store: &Path, verdict: &GateVerdict, session: Option<&str>)
     };
     trace.provenance.locator = session.map(|id| format!("session:{id}"));
     let mut memory = MemoryStore::open(store, KernelPolicy::default())?;
+    // A busy store is skipped, not waited on: the host waits for this process to exit.
+    memory.set_nonblocking_writes(true);
     memory.remember(trace)?;
     Ok(())
 }

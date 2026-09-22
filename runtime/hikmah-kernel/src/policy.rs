@@ -121,8 +121,17 @@ impl KernelPolicy {
             .map_err(|error| KernelError::Invalid(format!("policy {}: {error}", path.display())))
     }
 
+    /// Load a policy from JSON data (a `--policy` file or `HIKMAH_POLICY`). Data can tune
+    /// weights and thresholds but cannot lift the sensitive-persistence hard block: the
+    /// append-only reference ledger cannot delete, so enabling it belongs in code, next to an
+    /// encrypted, deletion-capable storage adapter, not in an ambient file or variable.
     pub fn from_json(text: &str) -> Result<Self> {
         let policy: Self = serde_json::from_str(text)?;
+        if policy.allow_sensitive_persistence {
+            return Err(KernelError::Invalid(
+                "policy field allow_sensitive_persistence cannot be enabled from a policy file; the append-only ledger cannot delete sensitive data. Enable it in code alongside an encrypted, deletion-capable store".into(),
+            ));
+        }
         policy.validate()?;
         Ok(policy)
     }
@@ -170,6 +179,41 @@ impl KernelPolicy {
         for (name, value) in unit {
             if !(0.0..=1.0).contains(&value) {
                 return bad(name, "must be between 0 and 1");
+            }
+        }
+        if self.minimum_recall_score <= 0.0 {
+            return bad(
+                "minimum_recall_score",
+                "must be above 0 (at 0, a trace with no matching cue would be recalled)",
+            );
+        }
+        if self.consolidation_min_support == 0 || self.consolidation_min_independent_sources == 0 {
+            return bad(
+                "consolidation_min_support / consolidation_min_independent_sources",
+                "must be at least 1",
+            );
+        }
+        // Each pair blends two shares of one score; above 1 the score saturates its clamp and
+        // ties are broken by recency instead of relevance.
+        for (name, a, b) in [
+            (
+                "recall.lexical_coverage + recall.lexical_jaccard",
+                r.lexical_coverage,
+                r.lexical_jaccard,
+            ),
+            (
+                "recall.cue_lexical + recall.cue_tag",
+                r.cue_lexical,
+                r.cue_tag,
+            ),
+            (
+                "recall.relevance_base + recall.metadata_share",
+                r.relevance_base,
+                r.metadata_share,
+            ),
+        ] {
+            if a + b > 1.0 + 1e-9 {
+                return bad(name, "must sum to at most 1");
             }
         }
         if r.relevance_base <= 0.0 {

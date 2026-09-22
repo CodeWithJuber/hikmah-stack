@@ -235,3 +235,38 @@ fn model_estimates_are_points_in_the_interval_not_evidence() {
     assert!((ranked.score_interval[1] - 0.78).abs() < 1e-9);
     assert!((ranked.coverage - 0.5).abs() < 1e-9);
 }
+
+#[test]
+fn an_engine_guess_is_never_decisive() {
+    // A pure model guess may reorder the ranking, but it must not look settled.
+    let mut guess = option("guess", &[], 0.0, false);
+    guess.model_scores = [("a".to_string(), 0.9), ("b".to_string(), 0.9)]
+        .into_iter()
+        .collect();
+    let frame = DecisionFrame {
+        question: "q".into(),
+        criteria: vec![criterion("a", 0.5), criterion("b", 0.5)],
+        options: vec![
+            guess,
+            option("evidenced", &[("a", 0.85), ("b", 0.85)], 1.0, false),
+        ],
+    };
+    let result = evaluate(&frame).unwrap();
+    assert!(!result.decisive, "a guess cannot make a result decisive");
+    let ranked = result.ranking.iter().find(|o| o.name == "guess").unwrap();
+    assert_eq!(ranked.evidence_interval, [0.0, 1.0]);
+    assert_eq!(ranked.coverage, 0.0);
+}
+
+#[test]
+fn an_exact_tie_is_not_decisive() {
+    let frame = DecisionFrame {
+        question: "q".into(),
+        criteria: vec![criterion("a", 1.0)],
+        options: vec![
+            option("x", &[("a", 0.5)], 1.0, false),
+            option("y", &[("a", 0.5)], 1.0, false),
+        ],
+    };
+    assert!(!evaluate(&frame).unwrap().decisive);
+}

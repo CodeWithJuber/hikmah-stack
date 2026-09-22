@@ -144,9 +144,13 @@ impl MemoryStore {
 
     /// Attach unresolved claim conflicts and supersession links to recall results.
     fn annotate_links(&self, results: &mut [RecallResult], allow_sensitive: bool) {
-        // Successor of every trace whose supersession applied (old id -> new id).
+        // Successor of every trace whose supersession applied (old id -> new id). A purged
+        // successor, or one hidden by the privacy filter, is not shown: its id would point at
+        // something recall itself refuses to return.
         let successors: BTreeMap<&str, &str> = self
             .all()
+            .filter(|entry| entry.status != TraceStatus::Purged)
+            .filter(|entry| allow_sensitive || entry.trace.privacy != PrivacyClass::Sensitive)
             .filter_map(|entry| {
                 let old = entry.trace.supersedes.as_deref()?;
                 let replaced = self.get(old)?.status == TraceStatus::Superseded;

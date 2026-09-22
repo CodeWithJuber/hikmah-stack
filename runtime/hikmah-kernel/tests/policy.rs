@@ -69,6 +69,16 @@ fn missing_fields_keep_defaults_and_bad_fields_are_rejected() {
         r#"{"recall": {"recency_scale_days": 0}}"#,
         r#"{"working_set_limit": 0}"#,
         r#"{"minimum_recall_score": -0.1}"#,
+        // At 0, a trace with no matching cue would be recalled.
+        r#"{"minimum_recall_score": 0}"#,
+        // Blended shares above 1 saturate the score clamp.
+        r#"{"recall": {"lexical_coverage": 1, "lexical_jaccard": 1}}"#,
+        r#"{"recall": {"cue_lexical": 0.9, "cue_tag": 0.2}}"#,
+        r#"{"recall": {"relevance_base": 1, "metadata_share": 1}}"#,
+        r#"{"consolidation_min_support": 0}"#,
+        r#"{"consolidation_min_independent_sources": 0}"#,
+        // Data cannot lift the sensitive-persistence hard block.
+        r#"{"allow_sensitive_persistence": true}"#,
     ] {
         assert!(KernelPolicy::from_json(bad).is_err(), "accepted {bad}");
     }

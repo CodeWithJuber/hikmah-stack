@@ -429,3 +429,37 @@ fn credentials_are_refused_in_every_field_before_anything_is_written() {
         .unwrap();
     open(&path).verify().unwrap();
 }
+
+#[test]
+fn a_purge_reason_cannot_re_leak_the_credential() {
+    let path = temp_store("purge-secret");
+    let mut store = open(&path);
+    let id = store.remember(note("deploy notes")).unwrap().0.id;
+    let before = line_count(&path);
+    let token = "ghp_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
+    match store.purge(&id, format!("leaked {token}")) {
+        Err(KernelError::Invalid(message)) => assert!(!message.contains(token), "{message}"),
+        other => panic!("expected Invalid, got {other:?}"),
+    }
+    assert_eq!(line_count(&path), before, "nothing may be written");
+    store.purge(&id, "contained a leaked GitHub token").unwrap();
+}
+
+#[test]
+fn a_file_that_is_not_a_ledger_is_never_truncated() {
+    let path = temp_store("not-a-ledger");
+    let text = "important notes without trailing newline";
+    fs::write(&path, text).unwrap();
+    let mut store = open(&path);
+    assert!(matches!(
+        store.remember(note("oops")),
+        Err(KernelError::Integrity { .. })
+    ));
+    assert_eq!(fs::read_to_string(&path).unwrap(), text);
+
+    // A crash during the very first write still leaves a repairable store.
+    let torn = temp_store("torn-first-record");
+    fs::write(&torn, br#"{"se"#).unwrap();
+    open(&torn).remember(note("after the crash")).unwrap();
+    assert_eq!(open(&torn).record_count(), 1);
+}

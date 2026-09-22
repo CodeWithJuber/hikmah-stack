@@ -14,6 +14,7 @@ use crate::calibration::{MIN_OUTCOMES, Z_CRITICAL};
 use crate::error::{KernelError, Result};
 use crate::hook::{DEFAULT_ENGINE_THRESHOLD, GATE_FAMILY};
 use crate::ledger::MemoryStore;
+use crate::trace::TraceStatus;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -68,7 +69,9 @@ pub fn rates_at(points: &[(f64, bool)], t: f64) -> ThresholdPoint {
 }
 
 /// Highest-recall threshold among the observed probabilities whose false-block rate is at most
-/// `max_false_block`; ties in recall go to the higher threshold. `None` when none qualifies.
+/// `max_false_block`; ties in recall go to fewer false blocks, then to the higher threshold.
+/// A threshold that catches no false completion only adds false blocks (turning the engine off
+/// does better), so it never qualifies. `None` when none qualifies.
 pub fn choose_threshold(points: &[(f64, bool)], max_false_block: f64) -> Option<ThresholdPoint> {
     let mut candidates: Vec<f64> = points.iter().map(|(p, _)| *p).collect();
     candidates.sort_by(|a, b| a.total_cmp(b));
@@ -76,10 +79,11 @@ pub fn choose_threshold(points: &[(f64, bool)], max_false_block: f64) -> Option<
     candidates
         .into_iter()
         .map(|t| rates_at(points, t))
-        .filter(|point| point.false_block_rate <= max_false_block)
+        .filter(|point| point.recall > 0.0 && point.false_block_rate <= max_false_block)
         .max_by(|a, b| {
             a.recall
                 .total_cmp(&b.recall)
+                .then(b.false_blocks.cmp(&a.false_blocks))
                 .then(a.threshold.total_cmp(&b.threshold))
         })
 }
@@ -111,6 +115,10 @@ impl MemoryStore {
         let mut points = Vec::new();
         let mut engines = BTreeSet::new();
         for entry in self.all() {
+            // A purged or superseded prediction must not steer the threshold.
+            if entry.status != TraceStatus::Active {
+                continue;
+            }
             let Some(prediction) = &entry.trace.prediction else {
                 continue;
             };

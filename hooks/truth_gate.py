@@ -51,7 +51,8 @@ SURROGATE_ESCAPE = re.compile(
     r"\\u[dD][89abAB][0-9a-fA-F]{2}(\\u[dD][c-fC-F][0-9a-fA-F]{2})?|\\u[dD][c-fC-F][0-9a-fA-F]{2}"
 )
 MESSAGE_FIELD = re.compile(r'"last_assistant_message"\s*:\s*"((?:[^"\\]|\\.)*)"')
-ACTIVE_FIELD = re.compile(r'"stop_hook_active"\s*:\s*(?:"true"|"1"|(?:true|1)\b)')
+# Same meaning as truthy(): any-case "true"/"1" strings, true, or any non-zero number.
+ACTIVE_FIELD = re.compile(r'"stop_hook_active"\s*:\s*(?:"\s*(?i:true|1)\s*"|true\b|-?(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)(?:[eE][+-]?[0-9]+)?)')
 NEGATION_WINDOW_CHARS = 200
 ZERO_WIDTH = {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"}
 APOSTROPHES = {"\u2019", "\u2018", "\u02bc"}

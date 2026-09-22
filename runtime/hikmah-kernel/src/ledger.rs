@@ -121,6 +121,9 @@ pub struct MemoryStore {
     missing_final_newline: bool,
     replay_issues: Vec<String>,
     head_at_load: HeadState,
+    /// When set, a write fails at once if another process holds the writer lock instead of
+    /// waiting for it (see [`Self::set_nonblocking_writes`]).
+    nonblocking_writes: bool,
 }
 
 impl MemoryStore {
@@ -161,6 +164,7 @@ impl MemoryStore {
             missing_final_newline: false,
             replay_issues: Vec::new(),
             head_at_load: HeadState::Missing,
+            nonblocking_writes: false,
         };
         // Read the head before the ledger: heads are written only after their records are
         // synced, so this snapshot can never be ahead of what we are about to read.
@@ -568,6 +572,25 @@ impl MemoryStore {
             self.replay_bytes(&tail)?;
         }
         if self.torn_tail_bytes > 0 {
+            // Truncating a torn record is a repair; truncating a file that was never a ledger is
+            // data loss. With no valid record, only cut bytes that begin like a ledger record.
+            if self.records.is_empty() {
+                let mut start = [0_u8; 7];
+                file.seek(SeekFrom::Start(self.offset))?;
+                let read = file.read(&mut start)?;
+                let signature: &[u8] = b"{\"seq\"";
+                let begins_like_record =
+                    start[..read].starts_with(signature) || signature.starts_with(&start[..read]);
+                if !begins_like_record {
+                    return Err(KernelError::Integrity {
+                        seq: 0,
+                        message: format!(
+                            "{} does not look like a Hikmah ledger (no valid record, and its content does not start like one); refusing to write to it",
+                            self.path.display()
+                        ),
+                    });
+                }
+            }
             file.set_len(self.offset)?;
             self.replay_issues.push(format!(
                 "repaired a torn final line of {} bytes",
@@ -627,6 +650,12 @@ impl MemoryStore {
         Ok(self.head())
     }
 
+    /// Make writes fail immediately when another process holds the writer lock, instead of
+    /// waiting. For callers such as the Stop hook that must never stall on a busy store.
+    pub fn set_nonblocking_writes(&mut self, nonblocking: bool) {
+        self.nonblocking_writes = nonblocking;
+    }
+
     pub fn lock_path(&self) -> PathBuf {
         let mut name = self.path.as_os_str().to_owned();
         name.push(".lock");
@@ -642,7 +671,20 @@ impl MemoryStore {
             .create(true)
             .truncate(false)
             .open(self.lock_path())?;
-        lock.lock()?;
+        if self.nonblocking_writes {
+            match lock.try_lock() {
+                Ok(()) => {}
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    return Err(KernelError::Invalid(format!(
+                        "{} is locked by another writer",
+                        self.path.display()
+                    )))
+                }
+                Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+            }
+        } else {
+            lock.lock()?;
+        }
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -777,6 +819,12 @@ fn validate_batch(traces: &BTreeMap<String, TraceEntry>, payloads: &[LedgerPaylo
                 }
                 if reason.trim().is_empty() {
                     return Err(KernelError::Invalid("purge needs a reason".into()));
+                }
+                // Purging is what a user does after a leak; the reason must not re-leak it.
+                if crate::secrets::contains_secret(reason) {
+                    return Err(KernelError::Invalid(
+                        "purge reason appears to contain a credential; describe the leak without quoting it".into(),
+                    ));
                 }
                 changed.insert(id.clone());
             }

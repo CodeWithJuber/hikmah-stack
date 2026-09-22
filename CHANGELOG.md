@@ -18,7 +18,7 @@ Fixes for gaps found by the research-to-implementation audit.
 ### Decisions
 - **Missing evidence is no longer imputed as the average of the known criteria.** Each option now reports `score_interval: [lo, hi]`, with every unscored criterion at the scale minimum for `lo` and at the maximum for `hi`. This is interval arithmetic with no invented prior.
   - **Ranking.** Admissible options rank by `lo`, then `hi`, then the existing tie-breaks.
-  - **New `decisive` field.** It is true only when the recommended option's `lo` is at least every other admissible option's `hi`.
+  - **New `decisive` field.** It is true only when the recommended option's `lo` is strictly greater than every other admissible option's `hi`, computed on `evidence_interval`. There, model-estimated criteria count as unknown, so an engine guess can reorder options but never makes a result decisive, and an exact tie is never decisive.
   - **Unchanged behaviour.** Hard blocks still rank last. The reversibility preference now compares lower bounds.
   - **Reference fields.** `raw_score` and `confidence_adjusted_score` are still reported but no longer order the ranking.
   - **Effect.** An option with one criterion scored 1.0 and three unknown (interval [0.25, 1.0]) used to outrank an option scored 0.6 on all four. It no longer does, and the result is marked not decisive.
@@ -58,8 +58,28 @@ Fixes for gaps found by the research-to-implementation audit.
 ### Docs
 - `COGNITIVE_KERNEL.md` said the deliberation lanes run concurrently. They run sequentially and deterministically over caller-supplied counts, as the 3.1.0 notes already said. It and `CO_MODEL.md` now say "independent, not concurrent".
 
+### Review fixes (independent review of this series)
+- **Decisions.**
+  - `decisive` is now computed on a new `evidence_interval`, where model-estimated criteria count as unknown. An engine guess could previously make a zero-evidence option `decisive: true` over a fully evidenced one. Estimates still rank options through `score_interval`.
+  - `decisive` is now strict, so an exact tie is never decisive.
+- **Memory.**
+  - A purge reason is checked for credentials, because purging is what a user does after a leak.
+  - The credential detector no longer refuses references and placeholders. `DB_PASSWORD=vault:secret/db/prod`, `${VAR}`, `$VAR`, `<redacted>` and `****` now pass; the refusal message itself recommends recording a vault path. `sk-` keys must contain a digit, so hyphenated prose such as `sk-learn-...` passes. Real values, including weak ones such as `changeme123`, are still refused.
+  - A write never truncates a file that is not a ledger. With no valid record, only bytes that begin like a ledger record are treated as a torn tail. Before, `--store notes.txt` or `HIKMAH_HOOK_RECORD=notes.txt` could silently cut a text file.
+  - `recall --include-superseded` no longer names a purged, or privacy-hidden, trace as `superseded_by`.
+- **Policy.**
+  - A policy file or `HIKMAH_POLICY` cannot enable `allow_sensitive_persistence`. One ambient variable could otherwise lift a hard block on an append-only ledger that cannot delete. Library code can still enable it alongside a deletion-capable store.
+  - Validation now rejects:
+    - `minimum_recall_score` of 0, which recalled traces with no matching cue;
+    - weight pairs that sum above 1, which saturated the score clamp;
+    - consolidation minimums of 0.
+- **Truth Gate.**
+  - Recording (`HIKMAH_HOOK_RECORD`) takes the store lock without waiting and skips the record when the store is busy. A held lock previously kept the hook process alive until the host's timeout.
+  - `gate-threshold` never recommends a threshold that catches no false completion, since that only adds false blocks. Recall ties go to fewer false blocks, and purged predictions are ignored.
+  - The fallback parse now honours `stop_hook_active` with the same meaning as the normal parse (any-case `"true"`/`"1"`, `true`, or any non-zero number), identically in Rust and Python. This includes payloads nested beyond serde_json's recursion limit. Four golden payload cases were added.
+
 ### Verification
-- `cargo fmt --check`, both Clippy runs with `-D warnings`, `cargo test --workspace` (111 passed, 1 ignored live Jev test; 83 before these changes), `hikmah validate --root .`, and `python3 hooks/test_truth_gate.py` (37 golden cases and 10 payload cases) all pass.
+- `cargo fmt --check`, both Clippy runs with `-D warnings`, `cargo test --workspace` (119 passed, 1 ignored live Jev test; 83 before these changes; 112 with `--no-default-features`), `hikmah validate --root .`, and `python3 hooks/test_truth_gate.py` (37 golden cases and 14 payload cases) all pass.
 
 ## 3.1.0 - 2026-09-21
 
