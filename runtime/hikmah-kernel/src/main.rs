@@ -28,6 +28,11 @@ const DEFAULT_STORE: &str = ".hikmah/memory.jsonl";
     about = "Hikmah deterministic co-model kernel"
 )]
 struct Cli {
+    /// Kernel policy JSON (limits, thresholds, recall weights). Missing fields keep their
+    /// defaults; unknown fields are errors. Falls back to `HIKMAH_POLICY`, then the built-in
+    /// defaults (`hikmah policy --print-defaults`).
+    #[arg(long, global = true, value_name = "PATH")]
+    policy: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -203,6 +208,11 @@ enum Command {
         #[arg(long, default_value = ".")]
         root: PathBuf,
     },
+    /// Print the effective kernel policy (after `--policy` / `HIKMAH_POLICY`), or the defaults.
+    Policy {
+        #[arg(long)]
+        print_defaults: bool,
+    },
 }
 
 fn main() {
@@ -212,8 +222,21 @@ fn main() {
     }
 }
 
-fn policy() -> KernelPolicy {
-    KernelPolicy::default()
+/// The policy file named by `--policy`, else by a non-empty `HIKMAH_POLICY`.
+fn policy_path(flag: Option<PathBuf>) -> Option<PathBuf> {
+    flag.or_else(|| {
+        std::env::var_os("HIKMAH_POLICY")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    })
+}
+
+/// Loaded only by commands that use it, so a bad policy file can never break `hook`.
+fn load_policy(path: Option<&std::path::Path>) -> Result<KernelPolicy> {
+    match path {
+        Some(path) => KernelPolicy::from_json_file(path),
+        None => Ok(KernelPolicy::default()),
+    }
 }
 
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
@@ -271,9 +294,11 @@ fn jev_engine(_timeout_ms: Option<u64>) -> Result<Box<dyn DecisionEngine>> {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    let policy_file = policy_path(cli.policy);
+    let policy = || load_policy(policy_file.as_deref());
     match cli.command {
         Command::Init { store } => {
-            let memory = MemoryStore::open(&store, policy())?;
+            let memory = MemoryStore::open(&store, policy()?)?;
             print_json(&json!({"store": store, "records": memory.record_count()}))?;
         }
         Command::Remember {
@@ -293,7 +318,7 @@ fn run() -> Result<()> {
             deadline,
             verified,
         } => {
-            let mut memory = MemoryStore::open(store, policy())?;
+            let mut memory = MemoryStore::open(store, policy()?)?;
             let mut trace = Trace::new(TraceKind::from_str(&kind)?, content, source);
             if trace.kind == TraceKind::Prediction {
                 return Err(KernelError::Invalid(
@@ -324,7 +349,7 @@ fn run() -> Result<()> {
             limit,
             include_superseded,
         } => {
-            let memory = MemoryStore::open_existing(store, policy())?;
+            let memory = MemoryStore::open_existing(store, policy()?)?;
             let mut recall = RecallQuery::new(query);
             recall.include_superseded = include_superseded;
             recall.tags = tags;
@@ -336,16 +361,16 @@ fn run() -> Result<()> {
             print_json(&memory.recall(&recall))?;
         }
         Command::Conflicts { store } => {
-            let memory = MemoryStore::open_existing(store, policy())?;
+            let memory = MemoryStore::open_existing(store, policy()?)?;
             print_json(&memory.active_conflicts())?;
         }
         Command::Fulfill { store, id } => {
-            let mut memory = MemoryStore::open_existing(store, policy())?;
+            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             memory.fulfill(&id)?;
             print_json(&json!({"fulfilled": id}))?;
         }
         Command::Purge { store, id, reason } => {
-            let mut memory = MemoryStore::open_existing(store, policy())?;
+            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             memory.purge(&id, reason)?;
             print_json(
                 &json!({"purged": id, "note": "tombstoned; content remains in the append-only ledger"}),
@@ -355,13 +380,13 @@ fn run() -> Result<()> {
             store,
             within_hours,
         } => {
-            let memory = MemoryStore::open_existing(store, policy())?;
+            let memory = MemoryStore::open_existing(store, policy()?)?;
             let now = hikmah_kernel::trace::now_ms();
             let within_ms = within_hours.saturating_mul(3_600_000);
             print_json(&memory.commitments_due(now, within_ms))?;
         }
         Command::Consolidate { store } => {
-            let memory = MemoryStore::open_existing(store, policy())?;
+            let memory = MemoryStore::open_existing(store, policy()?)?;
             print_json(&memory.consolidation_proposals())?;
         }
         Command::VerifyLedger {
@@ -369,7 +394,7 @@ fn run() -> Result<()> {
             expect_head,
             reset_head,
         } => {
-            let mut memory = MemoryStore::open_existing(store, policy())?;
+            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             if reset_head {
                 let head = memory.reset_head()?;
                 print_json(&json!({"head_reset": head}))?;
@@ -426,7 +451,7 @@ fn run() -> Result<()> {
             let decision = ask(engine.as_ref(), &request)?;
             let mut recorded = Vec::new();
             if record {
-                let mut memory = MemoryStore::open(store, policy())?;
+                let mut memory = MemoryStore::open(store, policy()?)?;
                 for trace in decision.prediction_traces(&request) {
                     let (trace, _) = memory.remember(trace)?;
                     recorded.push(trace.id);
@@ -441,7 +466,7 @@ fn run() -> Result<()> {
             source,
             note,
         } => {
-            let mut memory = MemoryStore::open_existing(store, policy())?;
+            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             let content = note.unwrap_or_else(|| format!("Outcome for {prediction}: {observed}"));
             let mut trace = Trace::new(TraceKind::Outcome, content, source);
             trace.outcome = Some(OutcomeRecord {
@@ -452,7 +477,7 @@ fn run() -> Result<()> {
             print_json(&trace)?;
         }
         Command::Calibration { store, family } => {
-            let memory = MemoryStore::open_existing(store, policy())?;
+            let memory = MemoryStore::open_existing(store, policy()?)?;
             print_json(&memory.calibration(family.as_deref()))?;
         }
         Command::Hook => {
@@ -485,6 +510,13 @@ fn run() -> Result<()> {
         Command::Validate { root } => {
             let notes = validate_repo(root)?;
             print_json(&json!({"ok": true, "checks": notes}))?;
+        }
+        Command::Policy { print_defaults } => {
+            if print_defaults {
+                print_json(&KernelPolicy::default())?;
+            } else {
+                print_json(&policy()?)?;
+            }
         }
     }
     Ok(())

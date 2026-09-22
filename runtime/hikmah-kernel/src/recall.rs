@@ -3,22 +3,25 @@
 //! Scoring (3.1.0): a trace must match the query's cues (terms or tags) to be recalled at all.
 //! Relevance then sets the score and metadata can only scale it:
 //!
-//! `score = cue × (0.55 + 0.45 × meta)`
+//! `score = cue × (relevance_base + metadata_share × meta)` (defaults 0.55 and 0.45)
 //!
 //! where `cue ∈ [0,1]` comes from query-term coverage and Jaccard overlap (plus tag coverage), and
 //! `meta ∈ [0,1]` blends recency, salience, confidence, provenance, and commitment urgency.
 //! `minimum_recall_score` is applied to `cue` (relevance), not to the final score, and any shared
-//! content term lifts `cue` to at least `MATCH_FLOOR`, so a long natural-language question that
-//! shares one key word with a memory still recalls it. Self-reported salience/confidence can
-//! reorder relevant memories by less than 2× but can never make an irrelevant memory appear.
-//! Overdue commitments surface without a cue. A query made only of stopwords matches nothing.
-//! The weights are explicit design choices, not calibrated values.
+//! content term lifts `cue` to at least `match_floor`, so a long natural-language question that
+//! shares one key word with a memory still recalls it. With the default weights, self-reported
+//! salience/confidence can reorder relevant memories by less than 2× (at most
+//! `1 + metadata_share / relevance_base`); with any weights they can never make an irrelevant
+//! memory appear. Overdue commitments surface without a cue. A query made only of stopwords
+//! matches nothing. Every weight is a field of [`RecallWeights`] in the kernel policy: explicit
+//! design choices, not calibrated values.
 //!
 //! Each result carries its claim's unresolved `conflicts` (other active traces with the same
 //! normalized claim key and a different value) and its supersession links, so a correction or a
 //! competing claim is visible beside the claim it challenges.
 use crate::claims::{claims_conflict, conflicting_ids};
 use crate::ledger::MemoryStore;
+use crate::policy::RecallWeights;
 use crate::trace::{now_ms, PrivacyClass, Trace, TraceKind, TraceStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -80,10 +83,6 @@ pub struct RecallResult {
     pub superseded_by: Option<String>,
 }
 
-const REDUNDANT_AT: f32 = 0.8;
-/// Relevance given to any trace that shares at least one content term with the query.
-const MATCH_FLOOR: f32 = 0.15;
-
 impl MemoryStore {
     pub fn recall(&self, query: &RecallQuery) -> Vec<RecallResult> {
         let query_terms = tokenize(&query.text);
@@ -101,6 +100,7 @@ impl MemoryStore {
         let minimum = self.policy().minimum_recall_score;
         let limit = query.limit.min(self.policy().recall_limit).max(1);
         let allow_sensitive = self.policy().allow_sensitive_persistence;
+        let weights = &self.policy().recall;
         let mut candidates: Vec<RecallResult> = self
             .all()
             .filter(|entry| {
@@ -125,6 +125,7 @@ impl MemoryStore {
                     has_cue,
                     query.now_ms,
                     minimum,
+                    weights,
                 )
             })
             .collect();
@@ -136,7 +137,7 @@ impl MemoryStore {
                 .then_with(|| b.trace.created_at_ms.cmp(&a.trace.created_at_ms))
         });
 
-        let mut results = diversify(candidates, limit);
+        let mut results = diversify(candidates, limit, weights);
         self.annotate_links(&mut results, allow_sensitive);
         results
     }
@@ -181,15 +182,16 @@ fn score_trace(
     has_cue: bool,
     now_ms: u64,
     minimum: f32,
+    w: &RecallWeights,
 ) -> Option<RecallResult> {
     let trace_terms = tokenize(&trace.content);
     let lexical = if query_terms.is_empty() {
         0.0
     } else {
-        let blended =
-            0.7 * coverage(query_terms, &trace_terms) + 0.3 * jaccard(query_terms, &trace_terms);
+        let blended = w.lexical_coverage * coverage(query_terms, &trace_terms)
+            + w.lexical_jaccard * jaccard(query_terms, &trace_terms);
         if blended > 0.0 {
-            blended.max(MATCH_FLOOR)
+            blended.max(w.match_floor)
         } else {
             0.0
         }
@@ -202,41 +204,49 @@ fn score_trace(
         .collect();
     let tag = coverage(query_tags, &trace_tags);
     let age_days = now_ms.saturating_sub(trace.created_at_ms) as f64 / 86_400_000.0;
-    let recency = (1.0 / (1.0 + age_days / 30.0)) as f32;
+    let recency = (1.0 / (1.0 + age_days / w.recency_scale_days)) as f32;
     let provenance = (trace.provenance.authority
-        * if trace.provenance.verified { 1.0 } else { 0.65 })
+        * if trace.provenance.verified {
+            1.0
+        } else {
+            w.unverified_provenance_factor
+        })
     .clamp(0.0, 1.0);
     let prospective = match (trace.kind, trace.deadline_ms) {
         (TraceKind::Commitment, Some(deadline)) if deadline <= now_ms => 1.0,
         (TraceKind::Commitment, Some(deadline)) => {
             let days = deadline.saturating_sub(now_ms) as f64 / 86_400_000.0;
-            (1.0 / (1.0 + days / 7.0)) as f32
+            (1.0 / (1.0 + days / w.prospective_scale_days)) as f32
         }
-        (TraceKind::Commitment, None) => 0.35,
+        (TraceKind::Commitment, None) => w.undated_commitment_urgency,
         _ => 0.0,
     };
 
     let cue = match (query_terms.is_empty(), query_tags.is_empty()) {
-        (false, false) => 0.8 * lexical + 0.2 * tag,
+        (false, false) => w.cue_lexical * lexical + w.cue_tag * tag,
         (false, true) => lexical,
         (true, false) => tag,
         (true, true) => 0.0,
     };
-    let meta = (0.25 * recency
-        + 0.20 * trace.salience
-        + 0.20 * trace.confidence
-        + 0.25 * provenance
-        + 0.10 * prospective)
+    let meta = (w.meta_recency * recency
+        + w.meta_salience * trace.salience
+        + w.meta_confidence * trace.confidence
+        + w.meta_provenance * provenance
+        + w.meta_prospective * prospective)
         .clamp(0.0, 1.0);
     let overdue = prospective >= 1.0;
     let score = if has_cue {
         if cue < minimum && !overdue {
             return None;
         }
-        (cue * (0.55 + 0.45 * meta)).max(if overdue { 0.15 } else { 0.0 })
+        (cue * (w.relevance_base + w.metadata_share * meta)).max(if overdue {
+            w.overdue_floor
+        } else {
+            0.0
+        })
     } else {
         // Listing mode (no query cues): order by metadata only.
-        0.5 * meta
+        w.listing_scale * meta
     }
     .clamp(0.0, 1.0);
 
@@ -259,7 +269,7 @@ fn score_trace(
     })
 }
 
-fn diversify(candidates: Vec<RecallResult>, limit: usize) -> Vec<RecallResult> {
+fn diversify(candidates: Vec<RecallResult>, limit: usize, w: &RecallWeights) -> Vec<RecallResult> {
     let mut selected: Vec<(RecallResult, BTreeSet<String>)> = Vec::new();
     for mut candidate in candidates {
         let terms = tokenize(&candidate.trace.content);
@@ -282,13 +292,13 @@ fn diversify(candidates: Vec<RecallResult>, limit: usize) -> Vec<RecallResult> {
                 twin = Some(index);
             }
         }
-        if redundancy >= REDUNDANT_AT {
+        if redundancy >= w.redundant_at {
             if let Some(index) = twin {
                 selected[index].0.duplicates += 1;
             }
             continue;
         }
-        candidate.score *= 1.0 - 0.35 * redundancy;
+        candidate.score *= 1.0 - w.redundancy_penalty * redundancy;
         selected.push((candidate, terms));
         selected.sort_by(|a, b| {
             b.0.score

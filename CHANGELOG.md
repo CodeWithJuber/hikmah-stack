@@ -15,6 +15,21 @@ Fixes for gaps found by the research-to-implementation audit.
 - Added the missing regression test for stale-belief suppression: after a supersession, and after reopening the store, the replaced belief is not recalled by default and the latest correction is. `docs/EVALUATION.md` claimed this coverage before the test existed.
 - Redundancy folding no longer folds or penalizes a claim against a claim it contradicts. Before, two near-identical sentences with different claim values could collapse into one result and hide the disagreement.
 
+### Policy
+- **The kernel policy is configurable from the CLI.** Before, every CLI command used `KernelPolicy::default()`.
+  - **Loading a policy.** A new global `--policy <file.json>` (or `HIKMAH_POLICY`) loads a policy JSON. Missing fields keep their defaults. Unknown fields and out-of-range values are rejected, so a typo cannot silently do nothing.
+  - **Printing it.** New `hikmah policy` prints the effective policy, and `hikmah policy --print-defaults` prints the defaults.
+  - **Hook isolation.** The Truth Gate hook never reads the policy, so a bad policy file cannot break it.
+- **Recall weights are policy data.** The constants that were hard-coded in `recall.rs` are now fields of `KernelPolicy.recall` with the same default values, so default behaviour is unchanged. They cover:
+  - the term blend (0.7 / 0.3) and the tag blend (0.8 / 0.2);
+  - the five metadata weights;
+  - the 0.55 / 0.45 relevance/metadata split;
+  - the 0.15 match floor;
+  - the 0.8 fold threshold and the 0.35 redundancy penalty;
+  - the 30-day recency scale and the 0.65 unverified factor;
+  - the 7-day commitment scale, the 0.35 undated urgency, the 0.15 overdue floor, and the 0.5 listing scale.
+- `docs/MEMORY.md` now shows the recall formula the code actually uses (it still showed the 3.0.0 additive sum).
+
 ### Decisions
 - **Missing evidence is no longer imputed as the average of the known criteria.** Each option now reports `score_interval: [lo, hi]`, with every unscored criterion at the scale minimum for `lo` and at the maximum for `hi`. This is interval arithmetic with no invented prior.
   - **Ranking.** Admissible options rank by `lo`, then `hi`, then the existing tie-breaks.
