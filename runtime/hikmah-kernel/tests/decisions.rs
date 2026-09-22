@@ -122,3 +122,116 @@ fn risk_and_human_impact_lanes_veto_on_a_single_item() {
     });
     assert!(result.can_proceed);
 }
+
+fn four_criteria() -> Vec<Criterion> {
+    ["safety", "cost", "speed", "quality"]
+        .iter()
+        .map(|id| criterion(id, 0.25))
+        .collect()
+}
+
+#[test]
+fn one_good_score_and_three_unknowns_cannot_beat_full_evidence() {
+    // Audit probe P4: A is 0.6 on all four criteria; B has only speed = 1.0 (safety unknown).
+    // B used to win with an adjusted 0.625 against 0.6.
+    let frame = DecisionFrame {
+        question: "q".into(),
+        criteria: four_criteria(),
+        options: vec![
+            option(
+                "a",
+                &[
+                    ("safety", 0.6),
+                    ("cost", 0.6),
+                    ("speed", 0.6),
+                    ("quality", 0.6),
+                ],
+                0.9,
+                false,
+            ),
+            option("b", &[("speed", 1.0)], 0.9, false),
+        ],
+    };
+    let result = evaluate(&frame).unwrap();
+    assert_eq!(result.recommended.as_deref(), Some("a"));
+    let a = &result.ranking[0];
+    let b = &result.ranking[1];
+    assert_eq!(a.score_interval, [0.6, 0.6]);
+    assert!((b.score_interval[0] - 0.25).abs() < 1e-9);
+    assert!((b.score_interval[1] - 1.0).abs() < 1e-9);
+    assert_eq!(b.missing_criteria, vec!["safety", "cost", "quality"]);
+    // B could still turn out better once its unknowns are measured.
+    assert!(!result.decisive);
+}
+
+#[test]
+fn decisive_only_when_no_unknown_could_change_the_winner() {
+    let frame = DecisionFrame {
+        question: "q".into(),
+        criteria: four_criteria(),
+        options: vec![
+            option(
+                "strong",
+                &[
+                    ("safety", 0.9),
+                    ("cost", 0.9),
+                    ("speed", 0.8),
+                    ("quality", 0.8),
+                ],
+                0.9,
+                true,
+            ),
+            // Best case 0.25 * 0.2 + 0.75 = 0.8 < 0.85.
+            option("weak", &[("safety", 0.2)], 0.9, true),
+        ],
+    };
+    let result = evaluate(&frame).unwrap();
+    assert_eq!(result.recommended.as_deref(), Some("strong"));
+    assert!(result.decisive);
+
+    // Ties on the lower bound go to the wider upper bound; blocked options never count.
+    let mut blocked = option(
+        "blocked",
+        &[
+            ("safety", 1.0),
+            ("cost", 1.0),
+            ("speed", 1.0),
+            ("quality", 1.0),
+        ],
+        1.0,
+        true,
+    );
+    blocked.hard_blocks = vec!["no consent".into()];
+    let frame = DecisionFrame {
+        question: "q".into(),
+        criteria: four_criteria(),
+        options: vec![
+            option("narrow", &[("safety", 0.4), ("cost", 0.4)], 0.9, true),
+            option("wide", &[("safety", 0.8)], 0.9, true),
+            blocked,
+        ],
+    };
+    let result = evaluate(&frame).unwrap();
+    let names: Vec<&str> = result.ranking.iter().map(|o| o.name.as_str()).collect();
+    assert_eq!(names, vec!["wide", "narrow", "blocked"]);
+    assert!(!result.decisive);
+}
+
+#[test]
+fn model_estimates_are_points_in_the_interval_not_evidence() {
+    let mut estimated = option("estimated", &[("safety", 0.8)], 0.9, true);
+    estimated.model_scores.insert("cost".into(), 0.6);
+    let frame = DecisionFrame {
+        question: "q".into(),
+        criteria: vec![
+            criterion("safety", 0.5),
+            criterion("cost", 0.3),
+            criterion("speed", 0.2),
+        ],
+        options: vec![estimated],
+    };
+    let ranked = &evaluate(&frame).unwrap().ranking[0];
+    assert!((ranked.score_interval[0] - 0.58).abs() < 1e-9);
+    assert!((ranked.score_interval[1] - 0.78).abs() < 1e-9);
+    assert!((ranked.coverage - 0.5).abs() < 1e-9);
+}

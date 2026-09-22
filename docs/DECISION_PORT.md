@@ -86,7 +86,14 @@ Environment:
 
 ## Decision frames with engine estimates
 
-Options may carry a free-text `description`. With `--engine`, the kernel asks one score question per missing criterion. Answers are stored in `model_scores`, which count toward `raw_score` but **not** toward `coverage`. An estimated criterion therefore changes the ranking without raising confidence. The output lists every estimate, and every abstention with its reason.
+Options may carry a free-text `description`. With `--engine`, the kernel asks one score question per missing criterion. Answers are stored in `model_scores`. They count as point values in the option's `score_interval`, and toward `raw_score`, but **not** toward `coverage`. An estimated criterion therefore narrows the interval and can change the ranking, but it never raises confidence. The output lists every estimate, and every abstention with its reason.
+
+Ranking uses the interval. With no engine, or where the engine abstains, a criterion stays unscored. It is then counted at the scale minimum (0) for `lo` and at the maximum (1) for `hi`:
+
+- `lo = Σ_scored w·s / Σ w`
+- `hi = (Σ_scored w·s + Σ_unscored w) / Σ w`
+
+Admissible options rank by `lo`, then `hi`, then reversible first, then name. `decisive` is true only when the recommended option's `lo` is at least every other admissible option's `hi`. `raw_score` and `confidence_adjusted_score` are still reported for comparison with 3.1.0, but they no longer order the ranking.
 
 ## Calibration verdict
 

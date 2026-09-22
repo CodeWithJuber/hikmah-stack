@@ -56,7 +56,12 @@ A bounded symbolic planner explores explicit world states and actions without a 
 
 ### 6. Decision Forge runtime
 
-Decision frames use explicit criteria, weights, evidence coverage, hard blocks, and reversibility. Missing evidence reduces confidence instead of being silently treated as a zero or a guess.
+Decision frames use explicit criteria, weights, evidence coverage, hard blocks, and reversibility. Missing evidence is neither treated as a zero nor filled with a guess, such as the average of the known criteria. An unscored criterion could be anywhere on the score scale.
+
+- **Score interval.** Each option gets `score_interval = [lo, hi]`. `lo` is the weighted score with every unscored criterion at the scale minimum, and `hi` is the same with each at the maximum. This is interval arithmetic with no invented prior.
+- **Ranking.** Admissible options rank by `lo`, then `hi`, then reversibility, then name. An option with one excellent score and several unknowns cannot outrank a fully evidenced option whose guaranteed score is higher.
+- **Decisiveness.** `decisive` is true only when the recommended option's `lo` is at least every other admissible option's `hi`, so measuring the unknowns could not change the winner.
+- **Hard blocks and reversibility.** Hard blocks still rank last. The reversibility preference applies to `lo`.
 
 ### 7. Model Port
 

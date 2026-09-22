@@ -15,6 +15,14 @@ Fixes for gaps found by the research-to-implementation audit.
 - Added the missing regression test for stale-belief suppression: after a supersession, and after reopening the store, the replaced belief is not recalled by default and the latest correction is. `docs/EVALUATION.md` claimed this coverage before the test existed.
 - Redundancy folding no longer folds or penalizes a claim against a claim it contradicts. Before, two near-identical sentences with different claim values could collapse into one result and hide the disagreement.
 
+### Decisions
+- **Missing evidence is no longer imputed as the average of the known criteria.** Each option now reports `score_interval: [lo, hi]`, with every unscored criterion at the scale minimum for `lo` and at the maximum for `hi`. This is interval arithmetic with no invented prior.
+  - **Ranking.** Admissible options rank by `lo`, then `hi`, then the existing tie-breaks.
+  - **New `decisive` field.** It is true only when the recommended option's `lo` is at least every other admissible option's `hi`.
+  - **Unchanged behaviour.** Hard blocks still rank last. The reversibility preference now compares lower bounds.
+  - **Reference fields.** `raw_score` and `confidence_adjusted_score` are still reported but no longer order the ranking.
+  - **Effect.** An option with one criterion scored 1.0 and three unknown (interval [0.25, 1.0]) used to outrank an option scored 0.6 on all four. It no longer does, and the result is marked not decisive.
+
 ### Docs
 - `COGNITIVE_KERNEL.md` said the deliberation lanes run concurrently. They run sequentially and deterministically over caller-supplied counts, as the 3.1.0 notes already said. It and `CO_MODEL.md` now say "independent, not concurrent".
 

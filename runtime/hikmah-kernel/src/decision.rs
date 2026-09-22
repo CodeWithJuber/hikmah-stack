@@ -1,18 +1,29 @@
 //! Weighted multi-criteria decisions with hard blocks and a reversibility preference.
 //!
-//! Semantics (3.1.0):
-//! - `raw_score` averages only the criteria that have a score (evidence or model estimate);
-//!   a missing criterion is *unknown*, not zero.
+//! Semantics:
+//! - A criterion with no score (neither evidence nor a model estimate) is *unknown*: it could
+//!   be anywhere on the score scale [0, 1]. It is not zero, and it is not the average of the
+//!   known criteria (that would be a guess).
+//! - `score_interval = [lo, hi]` is interval arithmetic over the weighted mean of every
+//!   criterion: `lo` puts each unknown criterion at the scale minimum (0) and `hi` at the scale
+//!   maximum (1), so `hi − lo` is the weight share still unknown. No prior is invented.
+//! - Admissible options rank by `lo` (the score they are guaranteed on the stated scores), then
+//!   by `hi`, then reversible first, then name. An option with one excellent score and three
+//!   unknowns therefore cannot outrank a fully evidenced option whose guaranteed score is higher.
+//! - `decisive` is true only when the recommended option's `lo` is at least every other
+//!   admissible option's `hi`: no resolution of the unknowns could change the winner.
 //! - `coverage` counts only evidence-backed criteria (`scores`). Model-estimated criteria
-//!   (`model_scores`, filled through the typed decision port) contribute to `raw_score` but not to
-//!   coverage, so a guess never raises confidence.
-//! - `confidence_adjusted_score = raw_score × (0.5 + 0.5 × evidence_confidence × coverage)`.
+//!   (`model_scores`, filled through the typed decision port) are point values in the interval
+//!   but never raise coverage, so a guess never raises confidence.
+//! - `raw_score` (mean over scored criteria) and
+//!   `confidence_adjusted_score = raw_score × (0.5 + 0.5 × evidence_confidence × coverage)` are
+//!   still reported for comparison with 3.1.0; they no longer order the ranking.
 //! - Blocked options always rank after admissible ones; `recommended` is `None` when every
 //!   option is blocked.
-//! - When the best admissible option is irreversible, evidence is weak, and a reversible option
-//!   is within `REVERSIBILITY_BAND`, the reversible option is recommended instead.
+//! - When the best admissible option is irreversible, evidence is weak, and a reversible option's
+//!   `lo` is within `REVERSIBILITY_BAND` of the best `lo`, the reversible option is recommended.
 //!
-//! The 0.5 floor, the band, and the weak-evidence threshold are explicit heuristics.
+//! The band and the weak-evidence threshold are explicit heuristics.
 use crate::error::{KernelError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,6 +66,8 @@ pub struct DecisionOption {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RankedOption {
     pub name: String,
+    /// `[lo, hi]`: the weighted score with every unscored criterion at 0 and at 1.
+    pub score_interval: [f64; 2],
     pub raw_score: f64,
     pub confidence_adjusted_score: f64,
     /// `evidence_confidence × coverage`.
@@ -77,6 +90,9 @@ pub struct DecisionResult {
     pub no_admissible_option: bool,
     /// True when the reversibility preference changed the recommendation.
     pub reversibility_preferred: bool,
+    /// True only when the recommended option's lower bound is at least every other admissible
+    /// option's upper bound, so no value of the unknown criteria could change the winner.
+    pub decisive: bool,
 }
 
 pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
@@ -135,6 +151,7 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
         let mut weighted = 0.0;
         let mut scored_weight = 0.0;
         let mut evidence_weight = 0.0;
+        let mut missing_weight = 0.0;
         let mut missing = Vec::new();
         let mut estimated = Vec::new();
         for criterion in &frame.criteria {
@@ -162,10 +179,17 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
                         option.name, criterion.id
                     )));
                 }
-                None => missing.push(criterion.id.clone()),
+                None => {
+                    missing_weight += criterion.weight;
+                    missing.push(criterion.id.clone());
+                }
             }
         }
         let coverage = evidence_weight / total_weight;
+        let score_interval = [
+            (weighted / total_weight).clamp(0.0, 1.0),
+            ((weighted + missing_weight) / total_weight).clamp(0.0, 1.0),
+        ];
         let raw_score = if scored_weight > 0.0 {
             weighted / scored_weight
         } else {
@@ -175,6 +199,7 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
         let confidence_adjusted_score = raw_score * (0.5 + 0.5 * confidence);
         ranking.push(RankedOption {
             name: option.name.clone(),
+            score_interval,
             raw_score,
             confidence_adjusted_score,
             evidence_confidence: confidence,
@@ -187,14 +212,12 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
         });
     }
 
+    let by = |x: f64, y: f64| y.partial_cmp(&x).unwrap_or(std::cmp::Ordering::Equal);
     ranking.sort_by(|a, b| {
         a.blocked
             .cmp(&b.blocked)
-            .then_with(|| {
-                b.confidence_adjusted_score
-                    .partial_cmp(&a.confidence_adjusted_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+            .then_with(|| by(a.score_interval[0], b.score_interval[0]))
+            .then_with(|| by(a.score_interval[1], b.score_interval[1]))
             .then_with(|| b.reversible.cmp(&a.reversible))
             .then_with(|| a.name.cmp(&b.name))
     });
@@ -202,10 +225,10 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
     let mut reversibility_preferred = false;
     if let Some(top) = ranking.first() {
         if !top.blocked && !top.reversible && top.evidence_confidence < WEAK_EVIDENCE {
-            let cutoff = top.confidence_adjusted_score - REVERSIBILITY_BAND;
+            let cutoff = top.score_interval[0] - REVERSIBILITY_BAND;
             if let Some(index) = ranking
                 .iter()
-                .position(|o| !o.blocked && o.reversible && o.confidence_adjusted_score >= cutoff)
+                .position(|o| !o.blocked && o.reversible && o.score_interval[0] >= cutoff)
             {
                 let preferred = ranking.remove(index);
                 ranking.insert(0, preferred);
@@ -214,15 +237,20 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
         }
     }
 
-    let recommended = ranking
-        .iter()
-        .find(|option| !option.blocked)
-        .map(|option| option.name.clone());
+    let top = ranking.iter().find(|option| !option.blocked);
+    let recommended = top.map(|option| option.name.clone());
+    let decisive = top.is_some_and(|top| {
+        ranking
+            .iter()
+            .filter(|other| !other.blocked && other.name != top.name)
+            .all(|other| top.score_interval[0] >= other.score_interval[1])
+    });
     Ok(DecisionResult {
         question: frame.question.clone(),
         no_admissible_option: recommended.is_none(),
         recommended,
         ranking,
         reversibility_preferred,
+        decisive,
     })
 }
