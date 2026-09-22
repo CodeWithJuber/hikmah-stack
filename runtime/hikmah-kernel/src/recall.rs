@@ -3,20 +3,28 @@
 //! Scoring (3.1.0): a trace must match the query's cues (terms or tags) to be recalled at all.
 //! Relevance then sets the score and metadata can only scale it:
 //!
-//! `score = cue × (0.55 + 0.45 × meta)`
+//! `score = cue × (relevance_base + metadata_share × meta)` (defaults 0.55 and 0.45)
 //!
 //! where `cue ∈ [0,1]` comes from query-term coverage and Jaccard overlap (plus tag coverage), and
 //! `meta ∈ [0,1]` blends recency, salience, confidence, provenance, and commitment urgency.
 //! `minimum_recall_score` is applied to `cue` (relevance), not to the final score, and any shared
-//! content term lifts `cue` to at least `MATCH_FLOOR`, so a long natural-language question that
-//! shares one key word with a memory still recalls it. Self-reported salience/confidence can
-//! reorder relevant memories by less than 2× but can never make an irrelevant memory appear.
-//! Overdue commitments surface without a cue. A query made only of stopwords matches nothing.
-//! The weights are explicit design choices, not calibrated values.
+//! content term lifts `cue` to at least `match_floor`, so a long natural-language question that
+//! shares one key word with a memory still recalls it. With the default weights, self-reported
+//! salience/confidence can reorder relevant memories by less than 2× (at most
+//! `1 + metadata_share / relevance_base`); with any weights they can never make an irrelevant
+//! memory appear. Overdue commitments surface without a cue. A query made only of stopwords
+//! matches nothing. Every weight is a field of [`RecallWeights`] in the kernel policy: explicit
+//! design choices, not calibrated values.
+//!
+//! Each result carries its claim's unresolved `conflicts` (other active traces with the same
+//! normalized claim key and a different value) and its supersession links, so a correction or a
+//! competing claim is visible beside the claim it challenges.
+use crate::claims::{claims_conflict, conflicting_ids};
 use crate::ledger::MemoryStore;
-use crate::trace::{now_ms, PrivacyClass, Trace, TraceKind};
+use crate::policy::RecallWeights;
+use crate::trace::{now_ms, PrivacyClass, Trace, TraceKind, TraceStatus};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone)]
 pub struct RecallQuery {
@@ -25,6 +33,9 @@ pub struct RecallQuery {
     pub kinds: Vec<TraceKind>,
     pub limit: usize,
     pub now_ms: u64,
+    /// Also recall superseded traces (history), each with `superseded_by` set. Off by default:
+    /// a replaced belief must not be activated as if it were current.
+    pub include_superseded: bool,
 }
 
 impl RecallQuery {
@@ -35,6 +46,7 @@ impl RecallQuery {
             kinds: Vec::new(),
             limit: 8,
             now_ms: now_ms(),
+            include_superseded: false,
         }
     }
 }
@@ -58,11 +70,18 @@ pub struct RecallResult {
     /// Near-identical traces folded into this result by redundancy suppression.
     #[serde(default)]
     pub duplicates: usize,
+    /// Other active traces whose claim has the same normalized key and a different normalized
+    /// value: an unresolved conflict. Empty for superseded results and for traces without a claim.
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+    /// The trace this one replaced (a correction's predecessor), when that supersession applied.
+    #[serde(default)]
+    pub supersedes: Option<String>,
+    /// The trace that replaced this one. Only superseded traces have one, so it is set only when
+    /// the query asked for `include_superseded`.
+    #[serde(default)]
+    pub superseded_by: Option<String>,
 }
-
-const REDUNDANT_AT: f32 = 0.8;
-/// Relevance given to any trace that shares at least one content term with the query.
-const MATCH_FLOOR: f32 = 0.15;
 
 impl MemoryStore {
     pub fn recall(&self, query: &RecallQuery) -> Vec<RecallResult> {
@@ -81,8 +100,14 @@ impl MemoryStore {
         let minimum = self.policy().minimum_recall_score;
         let limit = query.limit.min(self.policy().recall_limit).max(1);
         let allow_sensitive = self.policy().allow_sensitive_persistence;
+        let weights = &self.policy().recall;
         let mut candidates: Vec<RecallResult> = self
-            .active_traces()
+            .all()
+            .filter(|entry| {
+                entry.status == TraceStatus::Active
+                    || (query.include_superseded && entry.status == TraceStatus::Superseded)
+            })
+            .map(|entry| &entry.trace)
             .filter(|trace| {
                 if query.kinds.is_empty() {
                     // Model predictions are not memories of the world; ask for them explicitly.
@@ -100,6 +125,7 @@ impl MemoryStore {
                     has_cue,
                     query.now_ms,
                     minimum,
+                    weights,
                 )
             })
             .collect();
@@ -111,7 +137,45 @@ impl MemoryStore {
                 .then_with(|| b.trace.created_at_ms.cmp(&a.trace.created_at_ms))
         });
 
-        diversify(candidates, limit)
+        let mut results = diversify(candidates, limit, weights);
+        self.annotate_links(&mut results, allow_sensitive);
+        results
+    }
+
+    /// Attach unresolved claim conflicts and supersession links to recall results.
+    fn annotate_links(&self, results: &mut [RecallResult], allow_sensitive: bool) {
+        // Successor of every trace whose supersession applied (old id -> new id). A purged
+        // successor, or one hidden by the privacy filter, is not shown: its id would point at
+        // something recall itself refuses to return.
+        let successors: BTreeMap<&str, &str> = self
+            .all()
+            .filter(|entry| entry.status != TraceStatus::Purged)
+            .filter(|entry| allow_sensitive || entry.trace.privacy != PrivacyClass::Sensitive)
+            .filter_map(|entry| {
+                let old = entry.trace.supersedes.as_deref()?;
+                let replaced = self.get(old)?.status == TraceStatus::Superseded;
+                replaced.then_some((old, entry.trace.id.as_str()))
+            })
+            .collect();
+        for result in results {
+            let id = result.trace.id.as_str();
+            let active = self
+                .get(id)
+                .is_some_and(|entry| entry.status == TraceStatus::Active);
+            if active {
+                result.conflicts = conflicting_ids(
+                    &result.trace,
+                    self.active_traces()
+                        .filter(|t| allow_sensitive || t.privacy != PrivacyClass::Sensitive),
+                );
+            }
+            result.supersedes = result
+                .trace
+                .supersedes
+                .clone()
+                .filter(|old| successors.get(old.as_str()) == Some(&id));
+            result.superseded_by = successors.get(id).map(|new| new.to_string());
+        }
     }
 }
 
@@ -122,15 +186,16 @@ fn score_trace(
     has_cue: bool,
     now_ms: u64,
     minimum: f32,
+    w: &RecallWeights,
 ) -> Option<RecallResult> {
     let trace_terms = tokenize(&trace.content);
     let lexical = if query_terms.is_empty() {
         0.0
     } else {
-        let blended =
-            0.7 * coverage(query_terms, &trace_terms) + 0.3 * jaccard(query_terms, &trace_terms);
+        let blended = w.lexical_coverage * coverage(query_terms, &trace_terms)
+            + w.lexical_jaccard * jaccard(query_terms, &trace_terms);
         if blended > 0.0 {
-            blended.max(MATCH_FLOOR)
+            blended.max(w.match_floor)
         } else {
             0.0
         }
@@ -143,41 +208,49 @@ fn score_trace(
         .collect();
     let tag = coverage(query_tags, &trace_tags);
     let age_days = now_ms.saturating_sub(trace.created_at_ms) as f64 / 86_400_000.0;
-    let recency = (1.0 / (1.0 + age_days / 30.0)) as f32;
+    let recency = (1.0 / (1.0 + age_days / w.recency_scale_days)) as f32;
     let provenance = (trace.provenance.authority
-        * if trace.provenance.verified { 1.0 } else { 0.65 })
+        * if trace.provenance.verified {
+            1.0
+        } else {
+            w.unverified_provenance_factor
+        })
     .clamp(0.0, 1.0);
     let prospective = match (trace.kind, trace.deadline_ms) {
         (TraceKind::Commitment, Some(deadline)) if deadline <= now_ms => 1.0,
         (TraceKind::Commitment, Some(deadline)) => {
             let days = deadline.saturating_sub(now_ms) as f64 / 86_400_000.0;
-            (1.0 / (1.0 + days / 7.0)) as f32
+            (1.0 / (1.0 + days / w.prospective_scale_days)) as f32
         }
-        (TraceKind::Commitment, None) => 0.35,
+        (TraceKind::Commitment, None) => w.undated_commitment_urgency,
         _ => 0.0,
     };
 
     let cue = match (query_terms.is_empty(), query_tags.is_empty()) {
-        (false, false) => 0.8 * lexical + 0.2 * tag,
+        (false, false) => w.cue_lexical * lexical + w.cue_tag * tag,
         (false, true) => lexical,
         (true, false) => tag,
         (true, true) => 0.0,
     };
-    let meta = (0.25 * recency
-        + 0.20 * trace.salience
-        + 0.20 * trace.confidence
-        + 0.25 * provenance
-        + 0.10 * prospective)
+    let meta = (w.meta_recency * recency
+        + w.meta_salience * trace.salience
+        + w.meta_confidence * trace.confidence
+        + w.meta_provenance * provenance
+        + w.meta_prospective * prospective)
         .clamp(0.0, 1.0);
     let overdue = prospective >= 1.0;
     let score = if has_cue {
         if cue < minimum && !overdue {
             return None;
         }
-        (cue * (0.55 + 0.45 * meta)).max(if overdue { 0.15 } else { 0.0 })
+        (cue * (w.relevance_base + w.metadata_share * meta)).max(if overdue {
+            w.overdue_floor
+        } else {
+            0.0
+        })
     } else {
         // Listing mode (no query cues): order by metadata only.
-        0.5 * meta
+        w.listing_scale * meta
     }
     .clamp(0.0, 1.0);
 
@@ -194,10 +267,13 @@ fn score_trace(
             prospective,
         },
         duplicates: 0,
+        conflicts: Vec::new(),
+        supersedes: None,
+        superseded_by: None,
     })
 }
 
-fn diversify(candidates: Vec<RecallResult>, limit: usize) -> Vec<RecallResult> {
+fn diversify(candidates: Vec<RecallResult>, limit: usize, w: &RecallWeights) -> Vec<RecallResult> {
     let mut selected: Vec<(RecallResult, BTreeSet<String>)> = Vec::new();
     for mut candidate in candidates {
         let terms = tokenize(&candidate.trace.content);
@@ -205,6 +281,11 @@ fn diversify(candidates: Vec<RecallResult>, limit: usize) -> Vec<RecallResult> {
         let mut redundancy = 0.0_f32;
         let mut twin: Option<usize> = None;
         for (index, (existing, existing_terms)) in selected.iter().enumerate() {
+            // A competing claim is not redundant, however similar its wording: never fold or
+            // penalize it against the claim it contradicts.
+            if claims_conflict(&candidate.trace, &existing.trace) {
+                continue;
+            }
             let overlap = if normalize_content(&existing.trace.content) == normalized {
                 1.0
             } else {
@@ -215,13 +296,13 @@ fn diversify(candidates: Vec<RecallResult>, limit: usize) -> Vec<RecallResult> {
                 twin = Some(index);
             }
         }
-        if redundancy >= REDUNDANT_AT {
+        if redundancy >= w.redundant_at {
             if let Some(index) = twin {
                 selected[index].0.duplicates += 1;
             }
             continue;
         }
-        candidate.score *= 1.0 - 0.35 * redundancy;
+        candidate.score *= 1.0 - w.redundancy_penalty * redundancy;
         selected.push((candidate, terms));
         selected.sort_by(|a, b| {
             b.0.score

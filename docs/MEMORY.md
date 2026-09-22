@@ -44,15 +44,26 @@ The point is not metadata maximalism. The point is to retain the minimum informa
 
 ## Resonance Recall
 
-TraceWeave does not store permanent semantic edges. A query produces a temporary activation path using several channels:
+TraceWeave does not store permanent semantic edges. A query produces a temporary activation path. Relevance gates the result, and metadata only scales it:
 
 ```text
-R = lexical + tag + recency + salience + confidence + provenance + prospective urgency
+lexical = max(0.7 × query-term coverage + 0.3 × Jaccard overlap, 0.15)   if any query term matches, else 0
+cue     = 0.8 × lexical + 0.2 × tag coverage        (just one of them when the query has only terms or only tags)
+meta    = 0.25 × recency + 0.20 × salience + 0.20 × confidence + 0.25 × provenance + 0.10 × commitment urgency
+score   = cue × (0.55 + 0.45 × meta)                a trace with cue < minimum_recall_score (0.12) is not recalled
 ```
 
-Weights are explicit in `runtime/hikmah-kernel/src/recall.rs` and therefore inspectable. The current implementation uses deterministic token overlap, not embeddings. An embedding/local-model channel may be added later behind an adapter, but it cannot replace provenance or contradiction controls.
+Recency is `1 / (1 + age_days / 30)`. Provenance is `authority × (1 if verified, else 0.65)`. Every number above is a default field of the kernel policy (`KernelPolicy.recall` in `runtime/hikmah-kernel/src/policy.rs`). They are explicit design choices, not calibrated values. A policy file can change them (`hikmah --policy <file>` or `HIKMAH_POLICY`); `hikmah policy --print-defaults` lists them all. The current implementation uses deterministic token overlap, not embeddings. An embedding/local-model channel may be added later behind an adapter, but it cannot replace provenance or contradiction controls.
 
-After scoring, **suppression** reduces redundant near-duplicate recalls. The result is a small, diverse working set rather than a dump of everything vaguely related.
+After scoring, **suppression** reduces redundant near-duplicate recalls. The result is a small, diverse working set rather than a dump of everything vaguely related. A claim is never folded into, or penalized against, a claim it contradicts.
+
+Each recall result also carries what challenges it:
+
+- `conflicts`: ids of other active traces with the same normalized claim key and a different normalized value (unresolved);
+- `supersedes`: the trace a correction replaced;
+- `superseded_by`: the replacement. Superseded traces are recalled only with `--include-superseded` (history), so this is set only then.
+
+`hikmah conflicts` lists every open conflict, grouped by normalized key and value. Conflicts are recomputed from current state, so a supersession or purge resolves them.
 
 ## Quiet Replay and consolidation
 
@@ -90,7 +101,7 @@ Before durable memory writes:
 - keep source/authority separate from confidence;
 - do not auto-promote model output into belief;
 - quarantine contradictory or suspicious claims rather than overwriting;
-- never persist secrets merely because they appeared in conversation;
+- never persist secrets merely because they appeared in conversation (`remember` and every other write refuse a trace whose content, tags, claim key or value, source, or locator matches the credential detector in `secrets.rs`; it recognizes well-known credential shapes such as tokens, keys, `KEY=value` assignments, and passwords in URLs, and is not a DLP system);
 - scope preferences to the person/project/context that supplied them;
 - attach outcomes to prior actions so failed plans do not become success-pattern memories (`hikmah outcome` links an observed outcome to a recorded prediction);
 - never let model output verify itself: `model:` sources cannot be verified, cannot supersede, and cannot resolve predictions.

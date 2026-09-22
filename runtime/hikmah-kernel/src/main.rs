@@ -4,7 +4,9 @@ use hikmah_kernel::decision::{evaluate, DecisionFrame};
 use hikmah_kernel::decision_port::{
     ask, DecisionEngine, DecisionRequest, NoEngine, Question, QuestionKind,
 };
-use hikmah_kernel::hook::{run_stop_hook_with, DEFAULT_ENGINE_THRESHOLD};
+use hikmah_kernel::hook::{
+    explain_batch, explain_stop_event, run_stop_hook_recording, DEFAULT_ENGINE_THRESHOLD,
+};
 use hikmah_kernel::planner::{plan, PlanProblem};
 use hikmah_kernel::policy::KernelPolicy;
 use hikmah_kernel::recall::RecallQuery;
@@ -26,6 +28,11 @@ const DEFAULT_STORE: &str = ".hikmah/memory.jsonl";
     about = "Hikmah deterministic co-model kernel"
 )]
 struct Cli {
+    /// Kernel policy JSON (limits, thresholds, recall weights). Missing fields keep their
+    /// defaults; unknown fields are errors. Falls back to `HIKMAH_POLICY`, then the built-in
+    /// defaults (`hikmah policy --print-defaults`).
+    #[arg(long, global = true, value_name = "PATH")]
+    policy: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -85,6 +92,14 @@ enum Command {
         kinds: Vec<String>,
         #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..))]
         limit: u32,
+        /// Also recall superseded traces (history); each shows the trace that replaced it.
+        #[arg(long)]
+        include_superseded: bool,
+    },
+    /// List unresolved conflicts: active traces whose claims share a key but disagree on the value.
+    Conflicts {
+        #[arg(long, default_value = DEFAULT_STORE)]
+        store: PathBuf,
     },
     /// Mark a commitment fulfilled.
     Fulfill {
@@ -181,11 +196,32 @@ enum Command {
         family: Option<String>,
     },
     /// Truth Gate Stop hook. Engine via HIKMAH_HOOK_ENGINE=jev (needs TYPESAFE_API_KEY);
-    /// threshold via HIKMAH_HOOK_THRESHOLD (default 0.8).
+    /// threshold via HIKMAH_HOOK_THRESHOLD (default 0.6, measured in harness-bench).
+    /// HIKMAH_HOOK_RECORD=<store> appends each engine probability there as a prediction.
     Hook,
+    /// Explain the Truth Gate decision (rules verdict, engine probability, path) for a stop event
+    /// on stdin, or for JSON lines with `--batch`. Same engine settings and code path as `hook`.
+    GateExplain {
+        #[arg(long)]
+        batch: bool,
+    },
     Validate {
         #[arg(long, default_value = ".")]
         root: PathBuf,
+    },
+    /// Choose the Truth Gate engine threshold from recorded predictions and outcomes: the
+    /// threshold with the highest recall whose false-block rate stays within the budget.
+    GateThreshold {
+        #[arg(long, default_value = DEFAULT_STORE)]
+        store: PathBuf,
+        /// Largest acceptable false-block rate (blocked true completions / all true completions).
+        #[arg(long, default_value_t = 0.10)]
+        max_false_block: f64,
+    },
+    /// Print the effective kernel policy (after `--policy` / `HIKMAH_POLICY`), or the defaults.
+    Policy {
+        #[arg(long)]
+        print_defaults: bool,
     },
 }
 
@@ -196,8 +232,21 @@ fn main() {
     }
 }
 
-fn policy() -> KernelPolicy {
-    KernelPolicy::default()
+/// The policy file named by `--policy`, else by a non-empty `HIKMAH_POLICY`.
+fn policy_path(flag: Option<PathBuf>) -> Option<PathBuf> {
+    flag.or_else(|| {
+        std::env::var_os("HIKMAH_POLICY")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    })
+}
+
+/// Loaded only by commands that use it, so a bad policy file can never break `hook`.
+fn load_policy(path: Option<&std::path::Path>) -> Result<KernelPolicy> {
+    match path {
+        Some(path) => KernelPolicy::from_json_file(path),
+        None => Ok(KernelPolicy::default()),
+    }
 }
 
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
@@ -229,6 +278,23 @@ fn jev_engine(timeout_ms: Option<u64>) -> Result<Box<dyn DecisionEngine>> {
     Ok(Box::new(engine))
 }
 
+/// Engine and threshold for `hook` and `gate-explain`. Configuration problems never fail closed:
+/// an unusable engine setting means rules only.
+fn hook_settings() -> (Option<Box<dyn DecisionEngine>>, f64) {
+    let engine_name = std::env::var("HIKMAH_HOOK_ENGINE").unwrap_or_default();
+    let threshold = std::env::var("HIKMAH_HOOK_THRESHOLD")
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| (0.0..=1.0).contains(v))
+        .unwrap_or(DEFAULT_ENGINE_THRESHOLD);
+    let engine = if engine_name.trim().eq_ignore_ascii_case("jev") {
+        jev_engine(Some(3_000)).ok()
+    } else {
+        None
+    };
+    (engine, threshold)
+}
+
 #[cfg(not(feature = "jev"))]
 fn jev_engine(_timeout_ms: Option<u64>) -> Result<Box<dyn DecisionEngine>> {
     Err(KernelError::Invalid(
@@ -238,9 +304,11 @@ fn jev_engine(_timeout_ms: Option<u64>) -> Result<Box<dyn DecisionEngine>> {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    let policy_file = policy_path(cli.policy);
+    let policy = || load_policy(policy_file.as_deref());
     match cli.command {
         Command::Init { store } => {
-            let memory = MemoryStore::open(&store, policy())?;
+            let memory = MemoryStore::open(&store, policy()?)?;
             print_json(&json!({"store": store, "records": memory.record_count()}))?;
         }
         Command::Remember {
@@ -260,7 +328,7 @@ fn run() -> Result<()> {
             deadline,
             verified,
         } => {
-            let mut memory = MemoryStore::open(store, policy())?;
+            let mut memory = MemoryStore::open(store, policy()?)?;
             let mut trace = Trace::new(TraceKind::from_str(&kind)?, content, source);
             if trace.kind == TraceKind::Prediction {
                 return Err(KernelError::Invalid(
@@ -289,9 +357,11 @@ fn run() -> Result<()> {
             tags,
             kinds,
             limit,
+            include_superseded,
         } => {
-            let memory = MemoryStore::open_existing(store, policy())?;
+            let memory = MemoryStore::open_existing(store, policy()?)?;
             let mut recall = RecallQuery::new(query);
+            recall.include_superseded = include_superseded;
             recall.tags = tags;
             recall.kinds = kinds
                 .iter()
@@ -300,13 +370,17 @@ fn run() -> Result<()> {
             recall.limit = limit as usize;
             print_json(&memory.recall(&recall))?;
         }
+        Command::Conflicts { store } => {
+            let memory = MemoryStore::open_existing(store, policy()?)?;
+            print_json(&memory.active_conflicts())?;
+        }
         Command::Fulfill { store, id } => {
-            let mut memory = MemoryStore::open_existing(store, policy())?;
+            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             memory.fulfill(&id)?;
             print_json(&json!({"fulfilled": id}))?;
         }
         Command::Purge { store, id, reason } => {
-            let mut memory = MemoryStore::open_existing(store, policy())?;
+            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             memory.purge(&id, reason)?;
             print_json(
                 &json!({"purged": id, "note": "tombstoned; content remains in the append-only ledger"}),
@@ -316,13 +390,13 @@ fn run() -> Result<()> {
             store,
             within_hours,
         } => {
-            let memory = MemoryStore::open_existing(store, policy())?;
+            let memory = MemoryStore::open_existing(store, policy()?)?;
             let now = hikmah_kernel::trace::now_ms();
             let within_ms = within_hours.saturating_mul(3_600_000);
             print_json(&memory.commitments_due(now, within_ms))?;
         }
         Command::Consolidate { store } => {
-            let memory = MemoryStore::open_existing(store, policy())?;
+            let memory = MemoryStore::open_existing(store, policy()?)?;
             print_json(&memory.consolidation_proposals())?;
         }
         Command::VerifyLedger {
@@ -330,7 +404,7 @@ fn run() -> Result<()> {
             expect_head,
             reset_head,
         } => {
-            let mut memory = MemoryStore::open_existing(store, policy())?;
+            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             if reset_head {
                 let head = memory.reset_head()?;
                 print_json(&json!({"head_reset": head}))?;
@@ -387,7 +461,7 @@ fn run() -> Result<()> {
             let decision = ask(engine.as_ref(), &request)?;
             let mut recorded = Vec::new();
             if record {
-                let mut memory = MemoryStore::open(store, policy())?;
+                let mut memory = MemoryStore::open(store, policy()?)?;
                 for trace in decision.prediction_traces(&request) {
                     let (trace, _) = memory.remember(trace)?;
                     recorded.push(trace.id);
@@ -402,7 +476,7 @@ fn run() -> Result<()> {
             source,
             note,
         } => {
-            let mut memory = MemoryStore::open_existing(store, policy())?;
+            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             let content = note.unwrap_or_else(|| format!("Outcome for {prediction}: {observed}"));
             let mut trace = Trace::new(TraceKind::Outcome, content, source);
             trace.outcome = Some(OutcomeRecord {
@@ -413,33 +487,58 @@ fn run() -> Result<()> {
             print_json(&trace)?;
         }
         Command::Calibration { store, family } => {
-            let memory = MemoryStore::open_existing(store, policy())?;
+            let memory = MemoryStore::open_existing(store, policy()?)?;
             print_json(&memory.calibration(family.as_deref()))?;
         }
         Command::Hook => {
-            let engine_name = std::env::var("HIKMAH_HOOK_ENGINE").unwrap_or_default();
-            let threshold = std::env::var("HIKMAH_HOOK_THRESHOLD")
-                .ok()
-                .and_then(|v| v.trim().parse::<f64>().ok())
-                .filter(|v| (0.0..=1.0).contains(v))
-                .unwrap_or(DEFAULT_ENGINE_THRESHOLD);
-            // The hook must never fail closed on configuration problems: fall back to rules.
-            let engine: Option<Box<dyn DecisionEngine>> =
-                if engine_name.trim().eq_ignore_ascii_case("jev") {
-                    jev_engine(Some(3_000)).ok()
-                } else {
-                    None
-                };
-            run_stop_hook_with(
+            let (engine, threshold) = hook_settings();
+            // Opt-in measurement; recording failures never change the verdict.
+            let record = std::env::var_os("HIKMAH_HOOK_RECORD")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from);
+            run_stop_hook_recording(
                 io::stdin().lock(),
                 io::stdout().lock(),
                 engine.as_deref(),
                 threshold,
+                record.as_deref(),
             )?;
+        }
+        Command::GateThreshold {
+            store,
+            max_false_block,
+        } => {
+            let memory = MemoryStore::open_existing(store, policy()?)?;
+            print_json(&memory.gate_threshold(max_false_block)?)?;
+        }
+        Command::GateExplain { batch } => {
+            let (engine, threshold) = hook_settings();
+            if batch {
+                explain_batch(
+                    io::stdin().lock(),
+                    io::stdout().lock(),
+                    engine.as_deref(),
+                    threshold,
+                )?;
+            } else {
+                // Same lenient parsing as `hook` (lone surrogates, trailing data, invalid UTF-8).
+                print_json(&explain_stop_event(
+                    io::stdin().lock(),
+                    engine.as_deref(),
+                    threshold,
+                )?)?;
+            }
         }
         Command::Validate { root } => {
             let notes = validate_repo(root)?;
             print_json(&json!({"ok": true, "checks": notes}))?;
+        }
+        Command::Policy { print_defaults } => {
+            if print_defaults {
+                print_json(&KernelPolicy::default())?;
+            } else {
+                print_json(&policy()?)?;
+            }
         }
     }
     Ok(())

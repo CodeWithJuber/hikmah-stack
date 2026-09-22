@@ -44,11 +44,11 @@ Memory mutations are append-only, sequence-numbered, and hash-chained. A correct
 
 ### 3. CounterTrace
 
-Structured claims may carry a `claim_key` and `claim_value`. When a new active trace asserts a different value for the same key, the kernel emits a conflict rather than selecting whichever sentence arrived last.
+Structured claims may carry a `claim_key` and `claim_value`. When a new active trace asserts a different value for the same key, the kernel emits a conflict rather than selecting whichever sentence arrived last. Conflicts are derived from current state rather than stored: every recall result lists the ids of other active traces whose claim disagrees with it (`conflicts`), a correction shows the trace it replaced (`supersedes`), and `hikmah conflicts` lists every open disagreement. A supersession or purge resolves a conflict; there is no separate resolve event. Redundancy folding never folds a claim into the claim it contradicts.
 
 ### 4. Deliberation Lanes
 
-Evidence, memory integrity, irreversible risk, human impact, and delivery completeness run as independent lanes. The current Rust implementation executes these lanes concurrently and returns an explicit arbitration signal.
+Evidence, memory integrity, irreversible risk, human impact, and delivery completeness are independent lanes: each reads only its own input, and none sees another lane's verdict. The current Rust implementation (`council.rs`) evaluates them one after another, sequentially and deterministically, over counts the caller (or an engine, through the typed port) supplies. It returns an explicit arbitration signal: `can_proceed`, the `blocking_lanes`, and one signal per lane. The risk and human-impact lanes veto on a single item. The lanes are rules over counts, not agents or threads. 3.1.0 removed the earlier threads because they added no independence.
 
 ### 5. Branch Loom planner
 
@@ -56,7 +56,12 @@ A bounded symbolic planner explores explicit world states and actions without a 
 
 ### 6. Decision Forge runtime
 
-Decision frames use explicit criteria, weights, evidence coverage, hard blocks, and reversibility. Missing evidence reduces confidence instead of being silently treated as a zero or a guess.
+Decision frames use explicit criteria, weights, evidence coverage, hard blocks, and reversibility. Missing evidence is neither treated as a zero nor filled with a guess, such as the average of the known criteria. An unscored criterion could be anywhere on the score scale.
+
+- **Score interval.** Each option gets `score_interval = [lo, hi]`. `lo` is the weighted score with every unscored criterion at the scale minimum, and `hi` is the same with each at the maximum. This is interval arithmetic with no invented prior.
+- **Ranking.** Admissible options rank by `lo`, then `hi`, then reversibility, then name. An option with one excellent score and several unknowns cannot outrank a fully evidenced option whose guaranteed score is higher.
+- **Decisiveness.** `decisive` uses `evidence_interval`, the same interval with model-estimated criteria treated as unknown. It is true only when the recommended option's evidence `lo` is strictly greater than every other admissible option's evidence `hi`. Then neither measuring the unknowns nor an engine estimate proving wrong could change the winner. Exact ties are not decisive.
+- **Hard blocks and reversibility.** Hard blocks still rank last. The reversibility preference applies to `lo`.
 
 ### 7. Model Port
 

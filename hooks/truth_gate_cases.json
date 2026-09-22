@@ -1,5 +1,5 @@
 {
-  "description": "Golden cases for the Truth Gate deterministic rules. Shared by the Rust hook (tests/hook.rs) and the Python fallback (hooks/test_truth_gate.py). Each case is the last_assistant_message; expect is block or allow.",
+  "description": "Golden cases for the Truth Gate deterministic rules. Shared by the Rust hook (tests/hook.rs) and the Python fallback (hooks/test_truth_gate.py). Each case is the last_assistant_message; expect is block or allow. payload_cases are raw Stop-hook stdin payloads (malformed on purpose) that both implementations must parse to the same verdict.",
   "cases": [
     {
       "message": "Done. TODO: add tests",
@@ -148,6 +148,78 @@
     {
       "message": "Released v2; dark mode coming soon is on the roadmap page.",
       "expect": "allow"
+    }
+  ],
+  "payload_cases": [
+    {
+      "payload": "{\"last_assistant_message\":\"Done. TODO: add tests \\ud83d\"}",
+      "expect": "block",
+      "note": "lone surrogate escape (truncated emoji)"
+    },
+    {
+      "payload": "{\"last_assistant_message\":\"Done. TODO: add tests \\ud83d\\ude00 and \\ud83d\"}",
+      "expect": "block",
+      "note": "valid surrogate pair next to a lone one"
+    },
+    {
+      "payload": "{\"last_assistant_message\":\"Done. TODO: add tests\"} trailing",
+      "expect": "block",
+      "note": "trailing data after the object"
+    },
+    {
+      "payload": "{\"last_assistant_message\":\"Done. TODO: add tests\"}\n{\"x\":1}",
+      "expect": "block",
+      "note": "two concatenated objects"
+    },
+    {
+      "payload": "{\"x\":1e400,\"last_assistant_message\":\"Done. TODO: add tests\"}",
+      "expect": "block",
+      "note": "number out of f64 range"
+    },
+    {
+      "payload": "{\"x\":NaN,\"last_assistant_message\":\"Done. TODO: add tests\"}",
+      "expect": "block",
+      "note": "non-standard NaN constant"
+    },
+    {
+      "payload": "{\"last_assistant_message\":\"Fixed the parser; all tests pass.\"} trailing",
+      "expect": "allow",
+      "note": "trailing data, clean message"
+    },
+    {
+      "payload": "{\"stop_hook_active\":true,\"last_assistant_message\":\"Done. TODO: add tests\"} trailing",
+      "expect": "allow",
+      "note": "trailing data keeps the loop guard"
+    },
+    {
+      "payload": "{\"stop_hook_active\":\"true\",\"last_assistant_message\":\"Done. TODO: add tests\"} trailing",
+      "expect": "allow",
+      "note": "trailing data keeps a string loop guard"
+    },
+    {
+      "payload": "not json",
+      "expect": "allow",
+      "note": "not JSON"
+    },
+    {
+      "payload": "{\"last_assistant_message\":\"Done. TODO: add tests\",\"stop_hook_active\":\"TRUE\"} trailing",
+      "expect": "allow",
+      "note": "loop guard in the fallback parse: any-case string"
+    },
+    {
+      "payload": "{\"last_assistant_message\":\"Done. TODO: add tests\",\"stop_hook_active\":2} trailing",
+      "expect": "allow",
+      "note": "loop guard in the fallback parse: any non-zero number"
+    },
+    {
+      "payload": "{\"last_assistant_message\":\"Done. TODO: add tests\",\"stop_hook_active\":0} trailing",
+      "expect": "block",
+      "note": "loop guard in the fallback parse: zero is false"
+    },
+    {
+      "payload": "{\"x\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]],\"stop_hook_active\":2,\"last_assistant_message\":\"Done. TODO: add tests\"}",
+      "expect": "allow",
+      "note": "nesting beyond serde_json's recursion limit still honours the loop guard"
     }
   ]
 }

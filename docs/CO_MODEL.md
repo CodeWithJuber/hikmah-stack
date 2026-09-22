@@ -77,3 +77,5 @@ Input + Recall -----+-> Memory lane --------+
 ```
 
 This improves debuggability: a blocked action says **which lane blocked it and why**.
+
+In the Rust kernel, "parallel" means independent, not concurrent. Each lane reads only its own count, and the lanes run sequentially and deterministically (`council.rs`, `hikmah deliberate`). Agents following the parallel-deliberation playbook may still run their own reviews concurrently.

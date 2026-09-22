@@ -1,6 +1,86 @@
 
 # Changelog
 
+## Unreleased
+
+Fixes for gaps found by the research-to-implementation audit.
+
+### Memory
+- **Memory refuses credentials.** Trace validation runs the credential detector already used for outbound engine requests over content, tags, claim key and value, source, and locator. `remember`, `outcome`, `ask --record`, and every other append path reject a match with an `invalid input` error that names the field without echoing the value. Stores that already contain such text still open; only new writes are checked.
+- **Recall shows conflicts and corrections beside the claim.** Each recall result now has:
+  - `conflicts`: ids of other active traces whose claim has the same normalized key and a different normalized value;
+  - `supersedes`: the trace a correction replaced;
+  - `superseded_by`: the replacement, set when `recall --include-superseded` (new) returns history.
+- New `hikmah conflicts` lists every open conflict, grouped by normalized key and value. Conflicts are derived from current state, so a supersession or purge resolves them. Sensitive traces are left out under the default policy.
+- Added the missing regression test for stale-belief suppression: after a supersession, and after reopening the store, the replaced belief is not recalled by default and the latest correction is. `docs/EVALUATION.md` claimed this coverage before the test existed.
+- Redundancy folding no longer folds or penalizes a claim against a claim it contradicts. Before, two near-identical sentences with different claim values could collapse into one result and hide the disagreement.
+
+### Decisions
+- **Missing evidence is no longer imputed as the average of the known criteria.** Each option now reports `score_interval: [lo, hi]`, with every unscored criterion at the scale minimum for `lo` and at the maximum for `hi`. This is interval arithmetic with no invented prior.
+  - **Ranking.** Admissible options rank by `lo`, then `hi`, then the existing tie-breaks.
+  - **New `decisive` field.** It is true only when the recommended option's `lo` is strictly greater than every other admissible option's `hi`, computed on `evidence_interval`. There, model-estimated criteria count as unknown, so an engine guess can reorder options but never makes a result decisive, and an exact tie is never decisive.
+  - **Unchanged behaviour.** Hard blocks still rank last. The reversibility preference now compares lower bounds.
+  - **Reference fields.** `raw_score` and `confidence_adjusted_score` are still reported but no longer order the ranking.
+  - **Effect.** An option with one criterion scored 1.0 and three unknown (interval [0.25, 1.0]) used to outrank an option scored 0.6 on all four. It no longer does, and the result is marked not decisive.
+
+### Calibration
+- **`calibrated` now needs statistical support, not just 50 outcomes.** 50 resolved predictions make a family `measurable` (new field). It is `calibrated` only if Spiegelhalter's Z test does not reject calibration at alpha = 0.05 and the Brier skill over the base-rate predictor is positive. Choice and score families use the top-label probability and correctness for both checks. New per-family fields: `z`, `p_value` (normal approximation), `brier_skill`. Previously 50 predictions at p = 0.95 that were all wrong were reported `calibrated: true`; they are now `measurable: true, calibrated: false`. Formulas are in `docs/DECISION_PORT.md`.
+
+### Truth Gate
+- **`gate-explain` parses stdin like the hook.** Without `--batch` it used a strict JSON parse, so a payload with a lone surrogate escape was blocked by `hook` but reported `block: false` by `gate-explain`. Both now share `explain_stop_event`. When the hook would allow without judging (`stop_hook_active`, no message, not an object), `gate-explain` reports that in a new `skipped` field instead of judging anyway.
+- **Python fallback parity for malformed payloads.** `truth_gate.py` now mirrors the Rust three-stage payload parse (strict, with serde_json's strictness on NaN, out-of-range numbers, and lone surrogates; then surrogate-sanitized; then field extraction). A payload with trailing data after the object was blocked by Rust and allowed by Python; both now block. Ten malformed payloads are shared golden cases (`payload_cases` in `hooks/truth_gate_cases.json`).
+- The field-extraction fallback now honours `"stop_hook_active": "true"` and `"1"` (the old pattern required a word character after the closing quote, so with trailing data the loop guard was lost and the hook could block again). Surrogate sanitizing keeps valid escaped surrogate pairs and replaces only unpaired escapes (previously the high half of every pair was replaced).
+
+### Truth Gate threshold from data
+- **Opt-in recording.** When `HIKMAH_HOOK_RECORD=<store>` is set and the engine answered, `hikmah hook` appends that answer to the store as a `prediction` trace, after the verdict is written and flushed:
+  - family `truth_gate.false_completion.v2`, answer space `true`/`false`, and `p`;
+  - the host session id as the locator;
+  - not the message itself.
+
+  Recording failures and panics are swallowed and never change the verdict, output, or exit code.
+- **New `hikmah gate-threshold [--max-false-block 0.10]`.** It pairs those predictions with outcomes (`hikmah outcome --observed true` means the claim was a false completion). It reports the threshold with the highest recall whose empirical false-block rate is within the budget (ties go to the higher threshold), with `n`, recall, false-block rate, a Wilson 95% interval for the false-block rate, and the rates at the 0.6 default. It refuses below 50 resolved predictions or without both classes. This covers the engine path only, and the rates are in-sample.
+
+### Policy
+- **The kernel policy is configurable from the CLI.** Before, every CLI command used `KernelPolicy::default()`.
+  - **Loading a policy.** A new global `--policy <file.json>` (or `HIKMAH_POLICY`) loads a policy JSON. Missing fields keep their defaults. Unknown fields and out-of-range values are rejected, so a typo cannot silently do nothing.
+  - **Printing it.** New `hikmah policy` prints the effective policy, and `hikmah policy --print-defaults` prints the defaults.
+  - **Hook isolation.** The Truth Gate hook never reads the policy, so a bad policy file cannot break it.
+- **Recall weights are policy data.** The constants that were hard-coded in `recall.rs` are now fields of `KernelPolicy.recall` with the same default values, so default behaviour is unchanged. They cover:
+  - the term blend (0.7 / 0.3) and the tag blend (0.8 / 0.2);
+  - the five metadata weights;
+  - the 0.55 / 0.45 relevance/metadata split;
+  - the 0.15 match floor;
+  - the 0.8 fold threshold and the 0.35 redundancy penalty;
+  - the 30-day recency scale and the 0.65 unverified factor;
+  - the 7-day commitment scale, the 0.35 undated urgency, the 0.15 overdue floor, and the 0.5 listing scale.
+- `docs/MEMORY.md` now shows the recall formula the code actually uses (it still showed the 3.0.0 additive sum).
+
+### Docs
+- `COGNITIVE_KERNEL.md` said the deliberation lanes run concurrently. They run sequentially and deterministically over caller-supplied counts, as the 3.1.0 notes already said. It and `CO_MODEL.md` now say "independent, not concurrent".
+
+### Review fixes (independent review of this series)
+- **Decisions.**
+  - `decisive` is now computed on a new `evidence_interval`, where model-estimated criteria count as unknown. An engine guess could previously make a zero-evidence option `decisive: true` over a fully evidenced one. Estimates still rank options through `score_interval`.
+  - `decisive` is now strict, so an exact tie is never decisive.
+- **Memory.**
+  - A purge reason is checked for credentials, because purging is what a user does after a leak.
+  - The credential detector no longer refuses references and placeholders. `DB_PASSWORD=vault:secret/db/prod`, `${VAR}`, `$VAR`, `<redacted>` and `****` now pass; the refusal message itself recommends recording a vault path. `sk-` keys must contain a digit, so hyphenated prose such as `sk-learn-...` passes. Real values, including weak ones such as `changeme123`, are still refused.
+  - A write never truncates a file that is not a ledger. With no valid record, only bytes that begin like a ledger record are treated as a torn tail. Before, `--store notes.txt` or `HIKMAH_HOOK_RECORD=notes.txt` could silently cut a text file.
+  - `recall --include-superseded` no longer names a purged, or privacy-hidden, trace as `superseded_by`.
+- **Policy.**
+  - A policy file or `HIKMAH_POLICY` cannot enable `allow_sensitive_persistence`. One ambient variable could otherwise lift a hard block on an append-only ledger that cannot delete. Library code can still enable it alongside a deletion-capable store.
+  - Validation now rejects:
+    - `minimum_recall_score` of 0, which recalled traces with no matching cue;
+    - weight pairs that sum above 1, which saturated the score clamp;
+    - consolidation minimums of 0.
+- **Truth Gate.**
+  - Recording (`HIKMAH_HOOK_RECORD`) takes the store lock without waiting and skips the record when the store is busy. A held lock previously kept the hook process alive until the host's timeout.
+  - `gate-threshold` never recommends a threshold that catches no false completion, since that only adds false blocks. Recall ties go to fewer false blocks, and purged predictions are ignored.
+  - The fallback parse now honours `stop_hook_active` with the same meaning as the normal parse (any-case `"true"`/`"1"`, `true`, or any non-zero number), identically in Rust and Python. This includes payloads nested beyond serde_json's recursion limit. Four golden payload cases were added.
+
+### Verification
+- `cargo fmt --check`, both Clippy runs with `-D warnings`, `cargo test --workspace` (119 passed, 1 ignored live Jev test; 83 before these changes; 112 with `--no-default-features`), `hikmah validate --root .`, and `python3 hooks/test_truth_gate.py` (37 golden cases and 14 payload cases) all pass.
+
 ## 3.1.0 - 2026-09-21
 
 ### Typed decision port and Jev
@@ -8,7 +88,14 @@
 - Added an opt-in **TypeSafe Jev adapter** (`jev.rs`, default `jev` cargo feature) with retries inside a time budget, the platform certificate verifier, a redacted key, and malformed-answer rejection. Tests replay a captured `jev-1.13.0` response; a live test is available behind `--ignored`.
 - Added **prediction and outcome traces** and `hikmah calibration` (Brier, base-rate Brier, ECE, observed rate per engine and family). Model-authored traces cannot be verified, supersede, or resolve predictions. Outcomes must be a value from the prediction's answer space; purged or superseded outcomes do not count; predictions without any reported probability are recorded as unknown and counted separately, never given an invented value.
 - Added CLI commands `ask`, `outcome`, `calibration`, `fulfill`, and `purge`, plus `remember --deadline/--authority/--locator`, `recall --kind`, `verify-ledger --expect-head`, and `decide --engine` (engine estimates count toward ranking, never toward evidence coverage).
-- The Truth Gate can use a decision engine (`HIKMAH_HOOK_ENGINE=jev`) and falls back to the deterministic rules on any engine problem.
+- The Truth Gate can use a decision engine (`HIKMAH_HOOK_ENGINE=jev`) and falls back to the deterministic rules on any engine problem. `hikmah gate-explain [--batch]` prints the rules verdict, engine probability, threshold, and deciding path through the same code path as the hook, so the gate can be benchmarked and its threshold tuned.
+- **Truth Gate engine mode v2** (measured in harness-bench):
+  - **New question.** The engine now estimates whether the completion claim would fail a test run of the change, instead of whether the message admits unfinished work.
+  - **Rules as a hard floor.** The rules block on their own, and the engine can only add blocks.
+  - **New default threshold: 0.6** (was 0.8), chosen on a dev set.
+  - **Evidence.** On 600 held-out real agent messages, the old question caught 8.5% of false completions and the new one 16.3%, at a false-block rate under 10%. At the old 0.8 default, the gate caught 1 of 295.
+  - **Calibration.** The calibration family is now `truth_gate.false_completion.v2`.
+  - **Confirmed on fresh data** (harness-bench run 2: 900 new messages, pre-registered, thresholds fixed). v2 caught 18.2% of false completions against 11.0% for v1, at a 7.2% false-block rate.
 
 ### Ledger (fixes)
 - A `--supersedes` pointing at a missing trace no longer bricks the store: every event is validated before anything is written, and replay reports unapplicable legacy events as warnings instead of refusing to open.

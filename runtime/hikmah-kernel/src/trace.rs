@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{KernelError, Result};
+use crate::secrets::contains_secret;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -206,6 +207,7 @@ impl Trace {
         if self.content.trim().is_empty() {
             return Err(KernelError::Invalid("trace content cannot be empty".into()));
         }
+        self.refuse_secrets()?;
         if !(0.0..=1.0).contains(&self.salience) {
             return Err(KernelError::Invalid(
                 "salience must be between 0 and 1".into(),
@@ -280,6 +282,35 @@ impl Trace {
             }
         }
         Ok(())
+    }
+
+    /// Memory never stores a credential merely because it appeared. Every free-text field is
+    /// checked with the detector that guards outbound engine requests ([`contains_secret`]); the
+    /// error names the field but never echoes the matched text.
+    fn refuse_secrets(&self) -> Result<()> {
+        let mut fields: Vec<(&str, &str)> = vec![
+            ("content", self.content.as_str()),
+            ("source", self.provenance.source.as_str()),
+        ];
+        fields.extend(self.tags.iter().map(|tag| ("tag", tag.as_str())));
+        fields.extend(self.claim_key.as_deref().map(|key| ("claim_key", key)));
+        fields.extend(
+            self.claim_value
+                .as_deref()
+                .map(|value| ("claim_value", value)),
+        );
+        fields.extend(
+            self.provenance
+                .locator
+                .as_deref()
+                .map(|locator| ("locator", locator)),
+        );
+        match fields.into_iter().find(|(_, text)| contains_secret(text)) {
+            Some((field, _)) => Err(KernelError::Invalid(format!(
+                "trace {field} appears to contain a credential; memory never stores secrets. Record where the secret is kept (for example a vault path), not its value"
+            ))),
+            None => Ok(()),
+        }
     }
 }
 

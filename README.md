@@ -19,17 +19,17 @@ The table below separates executable evidence from architectural intent.
 |---|---|---|
 | Typed agent memory with provenance, confidence, privacy, deadlines, claims, and correction links | [`Trace`, `Provenance`, and validation](runtime/hikmah-kernel/src/trace.rs) | Implemented; model-authored traces can never be marked verified |
 | Append-only, sequence-numbered, hash-chained local ledger | [`MemoryStore`](runtime/hikmah-kernel/src/ledger.rs) and [ledger tests](runtime/hikmah-kernel/tests/ledger.rs) | Implemented and tested: validate-before-write, exclusive file lock, concurrent writers, torn-tail repair, head file for truncation, pinned-head check, legacy v1 ledgers |
-| Contradiction-aware structured claims | [Conflict detection](runtime/hikmah-kernel/src/claims.rs) and [tests](runtime/hikmah-kernel/tests/consolidation.rs) | Implemented and tested (Unicode NFC, case-sensitive values, supersession) |
+| Contradiction-aware structured claims | [Conflict detection](runtime/hikmah-kernel/src/claims.rs) and tests ([consolidation](runtime/hikmah-kernel/tests/consolidation.rs), [conflicts](runtime/hikmah-kernel/tests/conflicts.rs)) | Implemented and tested (Unicode NFC, case-sensitive values, supersession); recall lists open conflicts and supersession links beside each result, and `hikmah conflicts` lists every open conflict. Detection only: the kernel never picks a winner |
 | Relevance-gated contextual recall with metadata scaling and duplicate folding | [Recall](runtime/hikmah-kernel/src/recall.rs) and [recall tests](runtime/hikmah-kernel/tests/recall.rs) | Implemented and tested; lexical, not semantic |
 | Evidence-preserving consolidation proposals | [`consolidation_proposals`](runtime/hikmah-kernel/src/consolidation.rs) | Implemented and tested; no automatic promotion; model output never counts as support |
 | Prospective commitments with deadlines and fulfilment | [`commitments_due`](runtime/hikmah-kernel/src/prospective.rs), CLI `--deadline` and `fulfill` | Implemented and tested |
 | Bounded symbolic planning | [Planner](runtime/hikmah-kernel/src/planner.rs) and [tests](runtime/hikmah-kernel/tests/planner.rs) | Implemented and tested (depth and state budgets) |
-| Decision ranking with hard blocks, unknown-not-zero criteria, and a reversibility preference | [Decision evaluator](runtime/hikmah-kernel/src/decision.rs) and [tests](runtime/hikmah-kernel/tests/decisions.rs) | Implemented and tested |
+| Decision ranking with hard blocks, unknown criteria as score intervals, and a reversibility preference | [Decision evaluator](runtime/hikmah-kernel/src/decision.rs) and [tests](runtime/hikmah-kernel/tests/decisions.rs) | Implemented and tested: an unscored criterion spans the whole scale, options rank by the interval's lower bound, and `decisive` says whether the unknowns could change the winner |
 | Deterministic challenge lanes; risk and human-impact lanes veto on one item | [`deliberate`](runtime/hikmah-kernel/src/council.rs) | Implemented and tested; lanes read counts supplied by the caller; not LLM agents |
 | Typed decision port (choice / score / noul) with all-or-nothing admission | [`decision_port`](runtime/hikmah-kernel/src/decision_port.rs), [tests](runtime/hikmah-kernel/tests/decision_port.rs), [design](docs/DECISION_PORT.md) | Implemented and tested |
 | TypeSafe Jev adapter (opt-in, `jev` feature) | [`jev`](runtime/hikmah-kernel/src/jev.rs) and [tests](runtime/hikmah-kernel/tests/jev.rs) with a captured `jev-1.13.0` response | Implemented; offline tests plus an ignored live test |
-| Outcome write-back and calibration (Brier, ECE) | [`calibration`](runtime/hikmah-kernel/src/calibration.rs), CLI `outcome` and `calibration` | Implemented and tested; a family counts as calibrated only after 50 outcomes |
-| Narrow completion-claim hygiene | [Rust Truth Gate](runtime/hikmah-kernel/src/hook.rs), [launcher](hooks/truth_gate.sh), [Python fallback](hooks/truth_gate.py), [golden cases](hooks/truth_gate_cases.json) | Implemented; Rust and Python pass the same golden cases in CI; deliberately not a fact-checker |
+| Outcome write-back and calibration (Brier, ECE) | [`calibration`](runtime/hikmah-kernel/src/calibration.rs), CLI `outcome` and `calibration` | Implemented and tested; a family is `measurable` at 50 outcomes and `calibrated` only if Spiegelhalter's Z test does not reject (alpha 0.05) and it beats the base-rate Brier |
+| Narrow completion-claim hygiene | [Rust Truth Gate](runtime/hikmah-kernel/src/hook.rs), [launcher](hooks/truth_gate.sh), [Python fallback](hooks/truth_gate.py), [golden cases](hooks/truth_gate_cases.json) | Implemented. Rust and Python pass the same golden cases in CI. Deliberately not a fact-checker. The rules rarely fire on real agent "done" messages. The optional engine mode is a measured screen: it catches about one false completion in six ([numbers](docs/DECISION_PORT.md#truth-gate-engine-mode-measured-not-assumed)). With `HIKMAH_HOOK_RECORD` and `hikmah gate-threshold`, the threshold can be re-chosen from your own recorded outcomes ([how](docs/DECISION_PORT.md#choosing-the-threshold-from-your-own-traffic)). |
 | Reusable host packaging | [Codex manifest](.codex-plugin/plugin.json), [Claude manifest](.claude-plugin/plugin.json), [Kimi manifest](kimi.plugin.json), and [portable skills](skills/) | Configuration and instruction layer; versions, names, and hook paths checked by `hikmah validate` |
 | Automated validation | [GitHub Actions workflow](.github/workflows/validate.yml): fmt, Clippy (with and without network features), Rust tests, package validation, Python golden cases, hook launcher smoke test | CI-backed repository validation |
 
@@ -42,7 +42,7 @@ The table below separates executable evidence from architectural intent.
 | Retrieval | Deterministic relevance gate (terms or tags must match), light stemming, CJK bigrams, metadata scaling, duplicate folding; no embeddings |
 | Model integration | Typed `DecisionEngine` port with `NoEngine` and an opt-in TypeSafe Jev adapter; the text `ProposalEngine` still ships only `NoModel` |
 | Agent packaging | Portable instruction skills and thin Codex, Claude Code, and Kimi manifests |
-| Tests | 79 unit and integration tests covering every capability row; shared Truth Gate golden cases for Rust and Python |
+| Tests | 119 unit and integration tests (plus 1 ignored live Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
 | Deployment | Local source/CLI use; no hosted service or public production deployment is claimed |
 
 ### What this repository does not claim
@@ -156,6 +156,8 @@ cargo run -p hikmah-kernel -- verify-ledger
 `--source` defaults to `unknown`. Use `model:<engine>` for anything a model wrote; the kernel refuses to mark such traces verified or to let them supersede others. `verify-ledger` exits non-zero when the chain, the head file, or a pinned `--expect-head` does not match. While they disagree, writes are refused; after a deliberate repair, `verify-ledger --reset-head` accepts the current ledger.
 
 By default, local memory is written to `.hikmah/memory.jsonl`.
+
+Limits, thresholds, and every recall weight are fields of the kernel policy. `hikmah policy --print-defaults` prints them. `hikmah --policy my-policy.json <command>` (or `HIKMAH_POLICY=my-policy.json`) overrides any subset. Missing fields keep their defaults, unknown fields and out-of-range values are errors, and the hook never reads the policy. The defaults are design choices, not calibrated values.
 
 ### Run planning and decision examples
 
@@ -297,6 +299,7 @@ Hikmah ships no credentials, privileged remote service, or external database con
 - The reference store is local JSONL.
 - Hash chaining provides tamper evidence; it does not encrypt content or provide access control.
 - `sensitive` persistence is refused by default.
+- A trace whose text looks like a credential (common token, key, and password shapes; not a DLP system) is refused before it is written.
 - The append-only reference ledger is not a complete right-to-delete implementation.
 - A production system handling sensitive data needs an encrypted, access-controlled, deletion-capable storage adapter and an explicit retention policy.
 - The narrow Truth Gate does not fact-check arbitrary model output.

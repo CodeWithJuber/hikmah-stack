@@ -19,8 +19,15 @@ def run_hook(stdin_bytes):
 
 
 def main():
-    cases = json.loads((HERE / "truth_gate_cases.json").read_text(encoding="utf-8"))["cases"]
+    golden = json.loads((HERE / "truth_gate_cases.json").read_text(encoding="utf-8"))
+    cases = golden["cases"]
+    payload_cases = golden.get("payload_cases", [])
     failures = []
+    for case in payload_cases:
+        out = run_hook(case["payload"].encode("utf-8"))
+        got = "block" if out.get("decision") == "block" else "allow"
+        if got != case["expect"]:
+            failures.append(f"payload ({case['note']}): expected {case['expect']}, got {got}")
     for case in cases:
         got = "block" if truth_gate.rules_verdict(case["message"]) else "allow"
         if got != case["expect"]:
@@ -37,7 +44,7 @@ def main():
     if failures:
         print("\n".join(failures))
         return 1
-    print(f"ok: {len(cases)} golden cases + robustness checks")
+    print(f"ok: {len(cases)} golden cases + {len(payload_cases)} payload cases + robustness checks")
     return 0
 
 
