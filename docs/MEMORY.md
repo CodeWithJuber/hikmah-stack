@@ -52,7 +52,15 @@ R = lexical + tag + recency + salience + confidence + provenance + prospective u
 
 Weights are explicit in `runtime/hikmah-kernel/src/recall.rs` and therefore inspectable. The current implementation uses deterministic token overlap, not embeddings. An embedding/local-model channel may be added later behind an adapter, but it cannot replace provenance or contradiction controls.
 
-After scoring, **suppression** reduces redundant near-duplicate recalls. The result is a small, diverse working set rather than a dump of everything vaguely related.
+After scoring, **suppression** reduces redundant near-duplicate recalls. The result is a small, diverse working set rather than a dump of everything vaguely related. A claim is never folded into, or penalized against, a claim it contradicts.
+
+Each recall result also carries what challenges it:
+
+- `conflicts`: ids of other active traces with the same normalized claim key and a different normalized value (unresolved);
+- `supersedes`: the trace a correction replaced;
+- `superseded_by`: the replacement. Superseded traces are recalled only with `--include-superseded` (history), so this is set only then.
+
+`hikmah conflicts` lists every open conflict, grouped by normalized key and value. Conflicts are recomputed from current state, so a supersession or purge resolves them.
 
 ## Quiet Replay and consolidation
 

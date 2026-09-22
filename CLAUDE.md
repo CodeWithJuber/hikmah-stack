@@ -21,7 +21,7 @@ CI also runs the kernel tests, the validator, and the hook launcher on `windows-
 
 Run a single test with `cargo test -p hikmah-kernel --test ledger <test_name>`. Each file in `tests/` is its own test binary, and shared helpers such as `temp_store` and the fixture helpers live in `tests/common/mod.rs`. The live Jev test is `#[ignore]` and needs `HIKMAH_LIVE_JEV=1 TYPESAFE_API_KEY=... cargo test -p hikmah-kernel --test jev -- --ignored`.
 
-For CLI smoke tests, run `cargo run -p hikmah-kernel -- <subcommand>`. The `--help` output lists every subcommand, including `remember`, `recall`, `ask`, `outcome`, `calibration`, `decide`, `hook`, and `validate`. Memory commands default to `.hikmah/memory.jsonl`. Pass `--store <tmp path>` so your experiments stay out of the repo. Read-only commands refuse a store that doesn't exist, and `init` or a write creates it.
+For CLI smoke tests, run `cargo run -p hikmah-kernel -- <subcommand>`. The `--help` output lists every subcommand, including `remember`, `recall`, `conflicts`, `ask`, `outcome`, `calibration`, `decide`, `hook`, and `validate`. Memory commands default to `.hikmah/memory.jsonl`. Pass `--store <tmp path>` so your experiments stay out of the repo. Read-only commands refuse a store that doesn't exist, and `init` or a write creates it.
 
 On Windows, the default `jev` feature compiles C code (the `ring` crate), so a MinGW or MSVC C toolchain is needed. `--no-default-features` removes all network code.
 
@@ -42,7 +42,7 @@ There are three layers, and each change should stay within its layer:
   - **Writers:** writers take an exclusive lock on the `<store>.lock` sidecar, never on the ledger itself, because Windows locks are mandatory and would block readers. Under the lock, a writer re-reads records other processes appended, repairs a torn tail with `set_len`, and checks the `<store>.head` file so a write can't paper over a truncation. The ledger is opened read+write rather than append-only, because a Windows append handle can't truncate. Every write seeks to the end explicitly.
   - **Status changes:** `fulfill` and `purge` append status events. Purge is a tombstone, and the content stays on disk.
 - `recall.rs` is relevance-gated. A trace must share a query term or tag, and only then do metadata signals (salience, confidence, recency, provenance, deadline) scale its score. `Sensitive` traces and predictions are excluded unless asked for. `focus.rs` has `MemoryStore::focus`, a `FocusCapsule` bounded by `working_set_limit` that can `absorb` several recalls.
-- `consolidation.rs` only proposes promotions, with source-independence and confidence thresholds from `policy.rs`. `claims.rs` detects conflicts but does not resolve them.
+- `consolidation.rs` only proposes promotions, with source-independence and confidence thresholds from `policy.rs`. `claims.rs` detects conflicts but does not resolve them. Recall annotates each result with `conflicts` (other active traces with the same normalized key and a different value), `supersedes`, and `superseded_by` (superseded traces are recalled only with `include_superseded`), and `hikmah conflicts` lists open conflicts. All of it is derived from current state, never stored.
 
 ### Decisions and engines
 

@@ -44,7 +44,7 @@ Memory mutations are append-only, sequence-numbered, and hash-chained. A correct
 
 ### 3. CounterTrace
 
-Structured claims may carry a `claim_key` and `claim_value`. When a new active trace asserts a different value for the same key, the kernel emits a conflict rather than selecting whichever sentence arrived last.
+Structured claims may carry a `claim_key` and `claim_value`. When a new active trace asserts a different value for the same key, the kernel emits a conflict rather than selecting whichever sentence arrived last. Conflicts are derived from current state rather than stored: every recall result lists the ids of other active traces whose claim disagrees with it (`conflicts`), a correction shows the trace it replaced (`supersedes`), and `hikmah conflicts` lists every open disagreement. A supersession or purge resolves a conflict; there is no separate resolve event. Redundancy folding never folds a claim into the claim it contradicts.
 
 ### 4. Deliberation Lanes
 

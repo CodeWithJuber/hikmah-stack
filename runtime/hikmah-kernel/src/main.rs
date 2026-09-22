@@ -87,6 +87,14 @@ enum Command {
         kinds: Vec<String>,
         #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..))]
         limit: u32,
+        /// Also recall superseded traces (history); each shows the trace that replaced it.
+        #[arg(long)]
+        include_superseded: bool,
+    },
+    /// List unresolved conflicts: active traces whose claims share a key but disagree on the value.
+    Conflicts {
+        #[arg(long, default_value = DEFAULT_STORE)]
+        store: PathBuf,
     },
     /// Mark a commitment fulfilled.
     Fulfill {
@@ -314,9 +322,11 @@ fn run() -> Result<()> {
             tags,
             kinds,
             limit,
+            include_superseded,
         } => {
             let memory = MemoryStore::open_existing(store, policy())?;
             let mut recall = RecallQuery::new(query);
+            recall.include_superseded = include_superseded;
             recall.tags = tags;
             recall.kinds = kinds
                 .iter()
@@ -324,6 +334,10 @@ fn run() -> Result<()> {
                 .collect::<Result<_>>()?;
             recall.limit = limit as usize;
             print_json(&memory.recall(&recall))?;
+        }
+        Command::Conflicts { store } => {
+            let memory = MemoryStore::open_existing(store, policy())?;
+            print_json(&memory.active_conflicts())?;
         }
         Command::Fulfill { store, id } => {
             let mut memory = MemoryStore::open_existing(store, policy())?;
