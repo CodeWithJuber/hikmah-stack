@@ -5,7 +5,7 @@ use hikmah_kernel::decision_port::{
     ask, DecisionEngine, DecisionRequest, NoEngine, Question, QuestionKind,
 };
 use hikmah_kernel::hook::{
-    evaluate_message, explain_batch, run_stop_hook_with, DEFAULT_ENGINE_THRESHOLD,
+    explain_batch, explain_stop_event, run_stop_hook_with, DEFAULT_ENGINE_THRESHOLD,
 };
 use hikmah_kernel::planner::{plan, PlanProblem};
 use hikmah_kernel::policy::KernelPolicy;
@@ -460,15 +460,12 @@ fn run() -> Result<()> {
                     threshold,
                 )?;
             } else {
-                let mut buffer = String::new();
-                io::Read::read_to_string(&mut io::stdin().lock(), &mut buffer)?;
-                let payload: serde_json::Value =
-                    serde_json::from_str(&buffer).unwrap_or(serde_json::Value::Null);
-                let message = payload
-                    .get("last_assistant_message")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("");
-                print_json(&evaluate_message(message, engine.as_deref(), threshold))?;
+                // Same lenient parsing as `hook` (lone surrogates, trailing data, invalid UTF-8).
+                print_json(&explain_stop_event(
+                    io::stdin().lock(),
+                    engine.as_deref(),
+                    threshold,
+                )?)?;
             }
         }
         Command::Validate { root } => {

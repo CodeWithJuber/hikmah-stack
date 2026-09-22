@@ -65,6 +65,8 @@ TYPESAFE_API_KEY=... hikmah decide --frame examples/decision-frame.json --engine
 HIKMAH_HOOK_ENGINE=jev TYPESAFE_API_KEY=... hikmah hook < stop-event.json
 
 # Same code path, explained: rules verdict, engine probability, threshold, and which path decided.
+# stdin is parsed exactly like the hook's (lone surrogates, trailing data, invalid UTF-8); when the
+# hook would allow without judging (for example stop_hook_active), `skipped` says why.
 # --batch reads {"id", "last_assistant_message"} JSON lines and writes one verdict per line.
 HIKMAH_HOOK_ENGINE=jev TYPESAFE_API_KEY=... hikmah gate-explain < stop-event.json
 hikmah gate-explain --batch < messages.jsonl

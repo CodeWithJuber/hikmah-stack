@@ -1,23 +1,27 @@
 use hikmah_kernel::decision_port::{EngineDescriptor, RawAnswer, StaticEngine};
-use hikmah_kernel::hook::{rules_verdict, run_stop_hook, run_stop_hook_with};
+use hikmah_kernel::hook::{explain_stop_event, rules_verdict, run_stop_hook, run_stop_hook_with};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-fn cases() -> Vec<(String, String)> {
+fn golden(section: &str, field: &str) -> Vec<(String, String)> {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../hooks/truth_gate_cases.json");
     let value: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-    value["cases"]
+    value[section]
         .as_array()
         .unwrap()
         .iter()
         .map(|c| {
             (
-                c["message"].as_str().unwrap().to_string(),
+                c[field].as_str().unwrap().to_string(),
                 c["expect"].as_str().unwrap().to_string(),
             )
         })
         .collect()
+}
+
+fn cases() -> Vec<(String, String)> {
+    golden("cases", "message")
 }
 
 fn hook(input: &[u8]) -> Value {
@@ -106,4 +110,41 @@ fn engine_mode_uses_the_engine_and_falls_back_to_rules() {
         serde_json::from_slice::<Value>(&out).unwrap()["decision"],
         "block"
     );
+}
+
+#[test]
+fn malformed_payload_cases_match_the_python_fallback() {
+    let payloads = golden("payload_cases", "payload");
+    assert!(payloads.len() >= 5);
+    for (payload, expect) in payloads {
+        let got = if hook(payload.as_bytes())["decision"] == "block" {
+            "block"
+        } else {
+            "allow"
+        };
+        assert_eq!(got, expect, "hook on {payload:?}");
+        // gate-explain reads stdin through the same parser, so it reports the same verdict.
+        let explained = explain_stop_event(payload.as_bytes(), None, 0.6).unwrap();
+        assert_eq!(
+            explained.block,
+            expect == "block",
+            "gate-explain on {payload:?}"
+        );
+    }
+}
+
+#[test]
+fn gate_explain_parses_a_lone_surrogate_like_the_hook() {
+    let payload = r#"{"last_assistant_message":"Done. TODO: add tests \ud83d"}"#;
+    assert_eq!(hook(payload.as_bytes())["decision"], "block");
+    let verdict = explain_stop_event(payload.as_bytes(), None, 0.6).unwrap();
+    assert!(verdict.block && verdict.rules_block);
+    assert!(verdict.skipped.is_none());
+
+    // When the hook allows without judging, gate-explain says so instead of judging anyway.
+    let looping = br#"{"stop_hook_active": true, "last_assistant_message": "Done. TODO"}"#;
+    let verdict = explain_stop_event(looping.as_slice(), Some(&engine(0.99)), 0.6).unwrap();
+    assert!(!verdict.block);
+    assert_eq!(verdict.skipped.as_deref(), Some("stop_hook_active is set"));
+    assert!(verdict.p.is_none(), "nothing is sent to the engine");
 }

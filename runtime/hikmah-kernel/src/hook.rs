@@ -177,9 +177,10 @@ pub fn rules_verdict(message: &str) -> bool {
     unfinished || rules.promise.is_match(&text)
 }
 
-/// Parse the hook payload. Hosts can emit lone surrogate escapes (a truncated emoji) or numbers
-/// a strict parser rejects; those must not turn the gate off, so fall back to a sanitized parse
-/// and finally to extracting the two fields the gate needs.
+/// Parse the hook payload. Hosts can emit lone surrogate escapes (a truncated emoji), numbers
+/// a strict parser rejects, or trailing data after the object; those must not turn the gate off,
+/// so fall back to a sanitized parse and finally to extracting the two fields the gate needs.
+/// `hooks/truth_gate.py` mirrors these three stages (golden `payload_cases`).
 fn parse_payload(buffer: &str) -> Value {
     if let Ok(value) = serde_json::from_str(buffer) {
         return value;
@@ -187,14 +188,22 @@ fn parse_payload(buffer: &str) -> Value {
     static PATTERNS: OnceLock<(Regex, Regex, Regex)> = OnceLock::new();
     let (surrogate, message, active) = PATTERNS.get_or_init(|| {
         (
-            Regex::new(r"\\u[dD][89abAB][0-9a-fA-F]{2}").expect("surrogate regex"),
+            // A high surrogate escape with its low partner (kept), or an unpaired one (replaced).
+            Regex::new(r"\\u[dD][89abAB][0-9a-fA-F]{2}(\\u[dD][c-fC-F][0-9a-fA-F]{2})?|\\u[dD][c-fC-F][0-9a-fA-F]{2}")
+                .expect("surrogate regex"),
             Regex::new(r#""last_assistant_message"\s*:\s*"((?:[^"\\]|\\.)*)""#)
                 .expect("message regex"),
-            Regex::new(r#""stop_hook_active"\s*:\s*(?:true|"true"|"1"|1)\b"#)
+            Regex::new(r#""stop_hook_active"\s*:\s*(?:"true"|"1"|(?:true|1)\b)"#)
                 .expect("active regex"),
         )
     });
-    let sanitized = surrogate.replace_all(buffer, "\\ufffd");
+    let sanitized = surrogate.replace_all(buffer, |caps: &regex::Captures| {
+        if caps.get(1).is_some() {
+            caps[0].to_string()
+        } else {
+            "\\ufffd".to_string()
+        }
+    });
     if let Ok(value) = serde_json::from_str(&sanitized) {
         return value;
     }
@@ -249,39 +258,62 @@ pub fn run_stop_hook(input: impl Read, output: impl Write) -> Result<()> {
     run_stop_hook_with(input, output, None, DEFAULT_ENGINE_THRESHOLD)
 }
 
-/// Stop hook with an optional decision engine. Always prints valid JSON.
-pub fn run_stop_hook_with(
-    mut input: impl Read,
-    mut output: impl Write,
-    engine: Option<&dyn DecisionEngine>,
-    threshold: f64,
-) -> Result<()> {
+/// Read a Stop event the way the hook does: lossy UTF-8, then [`parse_payload`]. Returns the
+/// message to judge, or why the hook allows without judging.
+fn read_stop_event(mut input: impl Read) -> Result<std::result::Result<String, &'static str>> {
     let mut bytes = Vec::new();
     input.read_to_end(&mut bytes)?;
     let buffer = String::from_utf8_lossy(&bytes);
     let payload = parse_payload(&buffer);
-    let allow = |output: &mut dyn Write| writeln!(output, "{{}}");
-    if !payload.is_object() || truthy(payload.get("stop_hook_active")) {
-        allow(&mut output)?;
-        return Ok(());
+    if !payload.is_object() {
+        return Ok(Err("payload is not a JSON object"));
+    }
+    if truthy(payload.get("stop_hook_active")) {
+        return Ok(Err("stop_hook_active is set"));
     }
     let message = payload
         .get("last_assistant_message")
         .and_then(Value::as_str)
         .unwrap_or("");
     if message.trim().is_empty() {
-        allow(&mut output)?;
-        return Ok(());
+        return Ok(Err("no last_assistant_message"));
     }
+    Ok(Ok(message.to_string()))
+}
 
-    let verdict = evaluate_message(message, engine, threshold);
+/// Stop hook with an optional decision engine. Always prints valid JSON.
+pub fn run_stop_hook_with(
+    input: impl Read,
+    mut output: impl Write,
+    engine: Option<&dyn DecisionEngine>,
+    threshold: f64,
+) -> Result<()> {
+    let verdict = explain_stop_event(input, engine, threshold)?;
     match verdict.reason {
         Some(reason) if verdict.block => {
             writeln!(output, "{}", json!({"decision": "block", "reason": reason}))?
         }
-        _ => allow(&mut output)?,
+        _ => writeln!(output, "{{}}")?,
     }
     Ok(())
+}
+
+/// `hikmah gate-explain` (without `--batch`): the verdict the Stop hook reaches for this stdin,
+/// through the same parsing and the same [`evaluate_message`]. When the hook would allow without
+/// judging, `skipped` says why and nothing is sent to an engine.
+pub fn explain_stop_event(
+    input: impl Read,
+    engine: Option<&dyn DecisionEngine>,
+    threshold: f64,
+) -> Result<GateVerdict> {
+    Ok(match read_stop_event(input)? {
+        Ok(message) => evaluate_message(&message, engine, threshold),
+        Err(why) => {
+            let mut verdict = evaluate_message("", None, threshold);
+            verdict.skipped = Some(why.to_string());
+            verdict
+        }
+    })
 }
 
 /// Which path produced a Truth Gate verdict.
@@ -312,6 +344,9 @@ pub struct GateVerdict {
     /// Why the engine gave no probability (failure, abstention, or rejection), if it did not.
     pub engine_note: Option<String>,
     pub engine_latency_ms: Option<u64>,
+    /// Why the hook allowed without judging a message (for example `stop_hook_active`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<String>,
     #[serde(skip)]
     reason: Option<String>,
 }
@@ -334,6 +369,7 @@ pub fn evaluate_message(
         engine: None,
         engine_note: None,
         engine_latency_ms: None,
+        skipped: None,
         reason: rules_block.then(|| BLOCK_REASON.to_string()),
     };
     let Some(engine) = engine else {

@@ -10,6 +10,9 @@ an un-negated unfinished marker or a first-person future-work promise. Whole wor
 just before a word cancels it, and fenced or inline code is ignored. Text is normalized the same
 way as in Rust (NFC, curly apostrophes, zero-width characters removed, whitespace other than
 newline mapped to a space) and word boundaries are ASCII, so both implementations agree.
+Malformed payloads (lone surrogate escapes, trailing data, out-of-range numbers) go through the
+same three-stage parse as Rust's `parse_payload`, so a bad payload cannot switch the gate off here
+while Rust still judges it (golden `payload_cases`).
 """
 import json
 import re
@@ -43,6 +46,12 @@ COMPLETION_NEGATORS = {
 UNFINISHED_NEGATORS = {"no", "without", "zero", "removed", "remove", "replaced", "resolved", "cleared"}
 PLACEHOLDER_UI_TERMS = {"text", "attribute", "prop", "image", "color", "value"}
 WORD_SPLIT = re.compile(r"[ \n,;:()]+")
+# Payload fallback, mirrored from `parse_payload` in hook.rs.
+SURROGATE_ESCAPE = re.compile(
+    r"\\u[dD][89abAB][0-9a-fA-F]{2}(\\u[dD][c-fC-F][0-9a-fA-F]{2})?|\\u[dD][c-fC-F][0-9a-fA-F]{2}"
+)
+MESSAGE_FIELD = re.compile(r'"last_assistant_message"\s*:\s*"((?:[^"\\]|\\.)*)"')
+ACTIVE_FIELD = re.compile(r'"stop_hook_active"\s*:\s*(?:"true"|"1"|(?:true|1)\b)')
 NEGATION_WINDOW_CHARS = 200
 ZERO_WIDTH = {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"}
 APOSTROPHES = {"\u2019", "\u2018", "\u02bc"}
@@ -104,11 +113,65 @@ def truthy(value):
     return False
 
 
-def decide(raw_bytes):
+def _reject_constant(name):
+    raise ValueError(f"non-standard JSON constant {name}")
+
+
+def _finite_float(text):
+    value = float(text)
+    if value in (float("inf"), float("-inf")):
+        raise ValueError("number out of range")
+    return value
+
+
+def _finite_int(text):
+    value = int(text)
+    float(value)  # OverflowError beyond the f64 range, like serde_json
+    return value
+
+
+def strict_loads(text):
+    """json.loads with serde_json's strictness: no NaN/Infinity, no out-of-range numbers, no
+    lone surrogates, no trailing data (json.loads already rejects trailing data)."""
+    value = json.loads(
+        text,
+        parse_constant=_reject_constant,
+        parse_float=_finite_float,
+        parse_int=_finite_int,
+    )
+    json.dumps(value, ensure_ascii=False).encode("utf-8")  # raises on a lone surrogate
+    return value
+
+
+def parse_payload(text):
+    """Same three stages as `parse_payload` in hook.rs: strict parse; parse again with lone
+    surrogate escapes replaced; finally extract the two fields the gate needs, so trailing data,
+    a truncated emoji, or an odd number cannot turn the gate off."""
     try:
-        payload = json.loads(raw_bytes.decode("utf-8", errors="replace"))
+        return strict_loads(text)
     except Exception:
-        return {}
+        pass
+    # Keep escaped surrogate pairs; replace unpaired surrogate escapes with U+FFFD.
+    sanitized = SURROGATE_ESCAPE.sub(lambda m: m.group(0) if m.group(1) else "\\ufffd", text)
+    try:
+        return strict_loads(sanitized)
+    except Exception:
+        pass
+    match = MESSAGE_FIELD.search(sanitized)
+    if match is None:
+        return None
+    try:
+        message = strict_loads('"' + match.group(1) + '"')
+    except Exception:
+        message = ""
+    return {
+        "last_assistant_message": message,
+        "stop_hook_active": ACTIVE_FIELD.search(sanitized) is not None,
+    }
+
+
+def decide(raw_bytes):
+    payload = parse_payload(raw_bytes.decode("utf-8", errors="replace"))
     if not isinstance(payload, dict) or truthy(payload.get("stop_hook_active")):
         return {}
     message = payload.get("last_assistant_message")
