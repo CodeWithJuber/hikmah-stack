@@ -54,7 +54,8 @@ TYPESAFE_API_KEY=... hikmah ask --request examples/decision-request.json --engin
 # Later, a person or CI job records what actually happened.
 hikmah outcome --prediction tr_… --observed false --source oncall
 
-# Calibration per engine and question family: Brier, ECE (5 bins), base rate.
+# Calibration per engine and question family: Brier, ECE (5 bins), base rate, Spiegelhalter Z,
+# Brier skill, and the measurable / calibrated verdict.
 hikmah calibration
 
 # Let an engine estimate missing criteria for options that have a description.
@@ -86,6 +87,30 @@ Environment:
 ## Decision frames with engine estimates
 
 Options may carry a free-text `description`. With `--engine`, the kernel asks one score question per missing criterion. Answers are stored in `model_scores`, which count toward `raw_score` but **not** toward `coverage`. An estimated criterion therefore changes the ranking without raising confidence. The output lists every estimate, and every abstention with its reason.
+
+## Calibration verdict
+
+`hikmah calibration` groups resolved predictions by engine, family, and answer kind. For each group it reports Brier, ECE over 5 equal-width bins, the observed rate, and two tests. Each test uses pairs `(p, y)`:
+
+- **Noul families:** `p = P(true)`, and `y = 1` when the outcome was `true`.
+- **Choice and score families (top-label view):** `p` is the probability of the reported answer, and `y = 1` when the outcome equals it.
+
+| Field | Formula | Meaning |
+|---|---|---|
+| `z` | `Σ (y − p)(1 − 2p) / sqrt(Σ (1 − 2p)² p (1 − p))` | Spiegelhalter's Z statistic, approximately standard normal when the probabilities are calibrated. `null` when the variance term is zero (for example every `p` in {0, 0.5, 1}). |
+| `p_value` | `erfc(abs(z) / √2)` | Two-sided p-value of `z` from the normal approximation. |
+| `brier_skill` | `1 − B / (r (1 − r))` | Brier skill against always predicting the observed base rate `r`. Noul: `B` is the family Brier and `r` the share of `true`. Choice/score: `B` is the binary Brier of `(p, y)` and `r` the top-label accuracy. `null` when `r` is 0 or 1, because nothing beats a constant outcome in-sample. |
+| `measurable` | `n >= 50` | Enough resolved predictions to judge. |
+| `calibrated` | `measurable ∧ abs(z) < 1.96 ∧ brier_skill > 0` | The Z test does not reject calibration at alpha = 0.05, and the probabilities carry information beyond the base rate. |
+
+Source for the Z test: D. J. Spiegelhalter, "Probabilistic prediction in patient management and clinical trials", *Statistics in Medicine* 5(5):421–433, 1986.
+
+Limits:
+
+- The base rate is in-sample, which slightly favours the baseline, so the skill check is conservative.
+- The Z test has little power on small or narrow samples.
+- `calibrated: false` with `measurable: true` means the data contradict calibration, or the forecasts add nothing over the base rate.
+- For choice and score families, the multiclass `brier` field is still reported, but the verdict uses only the top-label pair.
 
 ## Jev adapter
 
@@ -123,6 +148,6 @@ Re-measure on your own traffic: `hikmah ask --record`, record outcomes, then run
 
 ## What this does not claim
 
-- The kernel does not verify any engine's claimed accuracy or calibration. It measures calibration only from outcomes you record, and marks a family calibrated only after 50 resolved predictions.
+- The kernel does not verify any engine's claimed accuracy or calibration. It measures calibration only from outcomes you record. 50 resolved predictions make a family `measurable`; it is marked `calibrated` only when the tests in [Calibration verdict](#calibration-verdict) also pass. Passing them means the data do not contradict calibration; it is not proof of it, and a family can drift after it passed.
 - The Truth Gate engine mode is a screen, not a verifier. On real agent "done" messages it catches a minority of false completions (about one in six in harness-bench run 1, at a false-block rate under 10%), because most false completions read exactly like true ones. Execution evidence (tests actually run) is what catches the rest.
 - The port does not make an engine's output durable truth. Promotion from a prediction to a belief still needs a non-model principal.

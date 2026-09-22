@@ -48,7 +48,7 @@ There are three layers, and each change should stay within its layer:
 
 - `decision_port.rs` is the typed decision port. It supports `choice`, `score`, and `noul` questions and defines a `DecisionEngine` trait with `NoEngine` and `StaticEngine`. The engine proposes and `admit()` decides, all or nothing: any violation turns *every* answer into an explicit abstain. `AdmittedDecision` is `#[non_exhaustive]` so nothing outside the crate can forge one. `secrets.rs` scans every outbound string before any engine sees it, and `Trace::validate` runs the same scan over a trace's content, tags, claim, source, and locator, so memory refuses credentials.
 - `jev.rs` is behind the default `jev` cargo feature. It is the TypeSafe Jev HTTP adapter, configured with `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, and `HIKMAH_JEV_*`. Its tests replay captured responses.
-- `calibration.rs` computes Brier score and ECE from the `prediction` traces and the linked `outcome` traces.
+- `calibration.rs` computes Brier score and ECE from the `prediction` traces and the linked `outcome` traces. A family is `measurable` at 50 outcomes and `calibrated` only when Spiegelhalter's Z test does not reject (`|z| < 1.96`) and Brier skill over the base rate is positive (top-label view for choice/score).
 - `decision.rs` ranks multi-criteria options. A missing criterion counts as unknown, not zero, and engine estimates never raise evidence coverage. Hard blocks always win. `council.rs` runs lanes sequentially, and a single risk or human-impact item can veto. `planner.rs` is bounded by `max_states` and a depth cap.
 - `model_port.rs` (`ProposalEngine` / `NoModel`) is the older free-text proposal boundary.
 

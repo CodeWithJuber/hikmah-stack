@@ -4,7 +4,21 @@
 //! it (written by a non-model principal; purged or superseded outcomes do not count) and reports,
 //! per engine and question family: Brier score, expected calibration error over 5 equal-width
 //! bins, accuracy or base rate, and how many predictions carried no probability at all.
-//! A family counts as calibrated only once it has at least [`MIN_OUTCOMES`] scored predictions.
+//!
+//! A family is `measurable` once it has at least [`MIN_OUTCOMES`] scored predictions. Sample size
+//! is necessary, not sufficient: it is reported `calibrated` only when, in addition,
+//!
+//! 1. Spiegelhalter's Z test does not reject calibration at alpha = 0.05:
+//!    `Z = Σ (y − p)(1 − 2p) / sqrt(Σ (1 − 2p)² p (1 − p))`, `|Z| < 1.96`
+//!    (two-sided p-value from the normal approximation), and
+//! 2. the Brier score beats always predicting the observed base rate:
+//!    `brier_skill = 1 − Brier / Brier(base rate) > 0`.
+//!
+//! Noul families use `p = P(true)` and `y = [observed is true]`. Choice and score families use the
+//! top-label view for both checks: `p` = probability of the reported answer and `y = [observed ==
+//! reported]`, with the binary Brier of that pair against the top-label accuracy base rate. When
+//! Z or the skill is undefined (zero variance, for example every `p` in {0, 0.5, 1}, or a base rate
+//! of 0 or 1) the family is not reported calibrated.
 use crate::ledger::MemoryStore;
 use crate::trace::{PredictionRecord, TraceKind, TraceStatus};
 use serde::Serialize;
@@ -12,6 +26,8 @@ use std::collections::BTreeMap;
 
 pub const MIN_OUTCOMES: usize = 50;
 const BINS: usize = 5;
+/// Two-sided critical value of the standard normal at alpha = 0.05.
+pub const Z_CRITICAL: f64 = 1.96;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CalibrationBin {
@@ -38,6 +54,17 @@ pub struct FamilyCalibration {
     pub ece: f64,
     /// Noul: share of outcomes that were `true`. Choice/score: accuracy of the top answer.
     pub rate: f64,
+    /// Spiegelhalter's Z for the reported probability (noul: P(true); others: P(top)).
+    /// `None` when its variance is zero.
+    pub z: Option<f64>,
+    /// Two-sided p-value of `z` (normal approximation). Small values reject calibration.
+    pub p_value: Option<f64>,
+    /// `1 − Brier / Brier(base rate)` (choice/score: top-label binary Brier). Positive means the
+    /// probabilities beat always predicting the base rate. `None` when the base rate is 0 or 1.
+    pub brier_skill: Option<f64>,
+    /// At least [`MIN_OUTCOMES`] scored predictions: enough data to judge calibration.
+    pub measurable: bool,
+    /// Measurable, `|z| < 1.96`, and `brier_skill > 0`.
     pub calibrated: bool,
     pub bins: Vec<CalibrationBin>,
 }
@@ -174,6 +201,26 @@ fn summarize(
         (brier, None)
     };
 
+    let (z, p_value) = match spiegelhalter_z(&points) {
+        Some(z) => (Some(z), Some(erfc(z.abs() / std::f64::consts::SQRT_2))),
+        None => (None, None),
+    };
+    // Noul: the family Brier and its base-rate Brier. Choice/score: the binary Brier of the
+    // top-label pair against the top-label accuracy base rate.
+    let (skill_brier, skill_reference) = match baseline_brier {
+        Some(base) => (brier, base),
+        None => (
+            points.iter().map(|(p, y)| (p - y).powi(2)).sum::<f64>() / denominator,
+            rate * (1.0 - rate),
+        ),
+    };
+    let brier_skill =
+        (n > 0 && skill_reference > f64::EPSILON).then(|| 1.0 - skill_brier / skill_reference);
+    let measurable = n >= MIN_OUTCOMES;
+    let calibrated = measurable
+        && z.is_some_and(|z| z.abs() < Z_CRITICAL)
+        && brier_skill.is_some_and(|skill| skill > 0.0);
+
     let mut bins = Vec::new();
     let mut ece = 0.0;
     for b in 0..BINS {
@@ -207,7 +254,61 @@ fn summarize(
         baseline_brier,
         ece,
         rate,
-        calibrated: n >= MIN_OUTCOMES,
+        z,
+        p_value,
+        brier_skill,
+        measurable,
+        calibrated,
         bins,
+    }
+}
+
+/// Spiegelhalter (1986) Z statistic for `(p, y)` pairs: under perfect calibration it is
+/// approximately standard normal. `None` when the variance term is zero.
+pub fn spiegelhalter_z(points: &[(f64, f64)]) -> Option<f64> {
+    let numerator: f64 = points.iter().map(|(p, y)| (y - p) * (1.0 - 2.0 * p)).sum();
+    let variance: f64 = points
+        .iter()
+        .map(|(p, _)| (1.0 - 2.0 * p).powi(2) * p * (1.0 - p))
+        .sum();
+    (variance > f64::EPSILON).then(|| numerator / variance.sqrt())
+}
+
+/// Complementary error function (Numerical Recipes `erfcc`, fractional error below 1.2e-7),
+/// so the kernel needs no maths dependency for a two-sided normal p-value.
+fn erfc(x: f64) -> f64 {
+    let z = x.abs();
+    let t = 1.0 / (1.0 + 0.5 * z);
+    let poly = -z * z - 1.265_512_23
+        + t * (1.000_023_68
+            + t * (0.374_091_96
+                + t * (0.096_784_18
+                    + t * (-0.186_288_06
+                        + t * (0.278_868_07
+                            + t * (-1.135_203_98
+                                + t * (1.488_515_87 + t * (-0.822_152_23 + t * 0.170_872_77))))))));
+    let r = t * poly.exp();
+    if x >= 0.0 {
+        r
+    } else {
+        2.0 - r
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normal_p_values_match_tables() {
+        for (z, expected) in [
+            (0.0, 1.0),
+            (1.96, 0.049_996),
+            (2.576, 0.009_995),
+            (1.0, 0.317_311),
+        ] {
+            let p = erfc(f64::abs(z) / std::f64::consts::SQRT_2);
+            assert!((p - expected).abs() < 1e-5, "z={z}: {p}");
+        }
     }
 }
