@@ -16,6 +16,7 @@ pub mod policy;
 pub mod prospective;
 pub mod recall;
 pub mod secrets;
+pub mod threshold;
 pub mod trace;
 pub mod validate;
 

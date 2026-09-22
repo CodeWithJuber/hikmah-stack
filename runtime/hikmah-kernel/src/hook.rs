@@ -24,19 +24,31 @@
 //! 7.9% false-block rate at 0.60, a threshold chosen on a separate dev set. The message alone
 //! cannot catch most false completions; treat this as a screen, not a verifier.
 //!
+//! Opt-in measurement: with a record store (`HIKMAH_HOOK_RECORD`), every probability the engine
+//! answers is appended there as a `prediction` trace (family `truth_gate.false_completion.v2`)
+//! after the verdict is written, so outcomes recorded later can set the threshold from data
+//! (`hikmah gate-threshold`). Recording is best effort and never changes the verdict.
+//!
 //! `hooks/truth_gate_cases.json` holds golden cases shared with the Python fallback.
 use crate::decision_port::{ask, DecisionEngine, DecisionRequest, Question, QuestionKind};
 use crate::error::Result;
+use crate::ledger::MemoryStore;
+use crate::policy::KernelPolicy;
+use crate::trace::Trace;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::io::{BufRead, Read, Write};
+use std::path::Path;
 use std::sync::OnceLock;
 use unicode_normalization::UnicodeNormalization;
 
 /// Chosen on harness-bench run 1 dev (300 messages; highest recall with a false-block rate of at
-/// most 10%) and confirmed on its held-out test split. Re-measure with `hikmah calibration`.
+/// most 10%) and confirmed on its held-out test split. Re-measure on your own traffic with
+/// `HIKMAH_HOOK_RECORD`, `hikmah outcome`, and `hikmah gate-threshold`.
 pub const DEFAULT_ENGINE_THRESHOLD: f64 = 0.6;
+/// Calibration family of the v2 outcome question. Calibration must not mix it with v1.
+pub const GATE_FAMILY: &str = "truth_gate.false_completion.v2";
 const MAX_ENGINE_STATE_CHARS: usize = 8_000;
 /// How far back (in characters) negation is looked for, which keeps the check linear.
 const NEGATION_WINDOW_CHARS: usize = 200;
@@ -247,7 +259,7 @@ pub fn false_completion_request(message: &str) -> Option<DecisionRequest> {
                 ),
             },
             // v2: the outcome question. Calibration must not mix it with the v1 question.
-            family: Some("truth_gate.false_completion.v2".into()),
+            family: Some(GATE_FAMILY.into()),
         }],
     )
     .ok()
@@ -259,42 +271,99 @@ pub fn run_stop_hook(input: impl Read, output: impl Write) -> Result<()> {
 }
 
 /// Read a Stop event the way the hook does: lossy UTF-8, then [`parse_payload`]. Returns the
-/// message to judge, or why the hook allows without judging.
-fn read_stop_event(mut input: impl Read) -> Result<std::result::Result<String, &'static str>> {
+/// message to judge (or why the hook allows without judging) and the host's `session_id`.
+fn read_stop_event(
+    mut input: impl Read,
+) -> Result<(std::result::Result<String, &'static str>, Option<String>)> {
     let mut bytes = Vec::new();
     input.read_to_end(&mut bytes)?;
     let buffer = String::from_utf8_lossy(&bytes);
     let payload = parse_payload(&buffer);
     if !payload.is_object() {
-        return Ok(Err("payload is not a JSON object"));
+        return Ok((Err("payload is not a JSON object"), None));
     }
+    let session = payload
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string);
     if truthy(payload.get("stop_hook_active")) {
-        return Ok(Err("stop_hook_active is set"));
+        return Ok((Err("stop_hook_active is set"), session));
     }
     let message = payload
         .get("last_assistant_message")
         .and_then(Value::as_str)
         .unwrap_or("");
     if message.trim().is_empty() {
-        return Ok(Err("no last_assistant_message"));
+        return Ok((Err("no last_assistant_message"), session));
     }
-    Ok(Ok(message.to_string()))
+    Ok((Ok(message.to_string()), session))
+}
+
+/// Judge one Stop event: the verdict and the host's session id.
+fn judge_stop_event(
+    input: impl Read,
+    engine: Option<&dyn DecisionEngine>,
+    threshold: f64,
+) -> Result<(GateVerdict, Option<String>)> {
+    let (message, session) = read_stop_event(input)?;
+    let verdict = match message {
+        Ok(message) => evaluate_message(&message, engine, threshold),
+        Err(why) => {
+            let mut verdict = evaluate_message("", None, threshold);
+            verdict.skipped = Some(why.to_string());
+            verdict
+        }
+    };
+    Ok((verdict, session))
 }
 
 /// Stop hook with an optional decision engine. Always prints valid JSON.
 pub fn run_stop_hook_with(
     input: impl Read,
-    mut output: impl Write,
+    output: impl Write,
     engine: Option<&dyn DecisionEngine>,
     threshold: f64,
 ) -> Result<()> {
-    let verdict = explain_stop_event(input, engine, threshold)?;
-    match verdict.reason {
+    run_stop_hook_recording(input, output, engine, threshold, None)
+}
+
+/// Stop hook that can also record the engine's answer. When `record` names a memory store and
+/// the engine answered, the prediction is appended there *after* the verdict is written and
+/// flushed. Any recording failure (or panic) is swallowed: it can never change the verdict,
+/// the output, or the exit status.
+pub fn run_stop_hook_recording(
+    input: impl Read,
+    mut output: impl Write,
+    engine: Option<&dyn DecisionEngine>,
+    threshold: f64,
+    record: Option<&Path>,
+) -> Result<()> {
+    let (verdict, session) = judge_stop_event(input, engine, threshold)?;
+    match &verdict.reason {
         Some(reason) if verdict.block => {
             writeln!(output, "{}", json!({"decision": "block", "reason": reason}))?
         }
         _ => writeln!(output, "{{}}")?,
     }
+    output.flush()?;
+    if let Some(store) = record {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            record_prediction(store, &verdict, session.as_deref())
+        }));
+    }
+    Ok(())
+}
+
+/// Append the engine's prediction for this verdict to `store`. The message itself is not
+/// stored: the trace holds the question, the probability, and the host session id as locator.
+fn record_prediction(store: &Path, verdict: &GateVerdict, session: Option<&str>) -> Result<()> {
+    let Some(mut trace) = verdict.prediction.clone() else {
+        return Ok(());
+    };
+    trace.provenance.locator = session.map(|id| format!("session:{id}"));
+    let mut memory = MemoryStore::open(store, KernelPolicy::default())?;
+    memory.remember(trace)?;
     Ok(())
 }
 
@@ -306,14 +375,7 @@ pub fn explain_stop_event(
     engine: Option<&dyn DecisionEngine>,
     threshold: f64,
 ) -> Result<GateVerdict> {
-    Ok(match read_stop_event(input)? {
-        Ok(message) => evaluate_message(&message, engine, threshold),
-        Err(why) => {
-            let mut verdict = evaluate_message("", None, threshold);
-            verdict.skipped = Some(why.to_string());
-            verdict
-        }
-    })
+    Ok(judge_stop_event(input, engine, threshold)?.0)
 }
 
 /// Which path produced a Truth Gate verdict.
@@ -349,6 +411,9 @@ pub struct GateVerdict {
     pub skipped: Option<String>,
     #[serde(skip)]
     reason: Option<String>,
+    /// The engine's answer as a `prediction` trace, when it answered (recorded only on request).
+    #[serde(skip)]
+    prediction: Option<Trace>,
 }
 
 /// Decide one message. The Stop hook and `hikmah gate-explain` both call this, so the benchmark
@@ -371,6 +436,7 @@ pub fn evaluate_message(
         engine_latency_ms: None,
         skipped: None,
         reason: rules_block.then(|| BLOCK_REASON.to_string()),
+        prediction: None,
     };
     let Some(engine) = engine else {
         return verdict;
@@ -393,6 +459,7 @@ pub fn evaluate_message(
                     verdict.path = GatePath::Engine;
                     verdict.p = Some(p);
                     verdict.engine_block = Some(engine_block);
+                    verdict.prediction = decision.prediction_traces(&request).into_iter().next();
                     // The rules are a hard floor: the engine can add a block, never remove one.
                     verdict.block = rules_block || engine_block;
                     if !rules_block && engine_block {

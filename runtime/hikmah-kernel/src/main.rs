@@ -5,7 +5,7 @@ use hikmah_kernel::decision_port::{
     ask, DecisionEngine, DecisionRequest, NoEngine, Question, QuestionKind,
 };
 use hikmah_kernel::hook::{
-    explain_batch, explain_stop_event, run_stop_hook_with, DEFAULT_ENGINE_THRESHOLD,
+    explain_batch, explain_stop_event, run_stop_hook_recording, DEFAULT_ENGINE_THRESHOLD,
 };
 use hikmah_kernel::planner::{plan, PlanProblem};
 use hikmah_kernel::policy::KernelPolicy;
@@ -197,6 +197,7 @@ enum Command {
     },
     /// Truth Gate Stop hook. Engine via HIKMAH_HOOK_ENGINE=jev (needs TYPESAFE_API_KEY);
     /// threshold via HIKMAH_HOOK_THRESHOLD (default 0.6, measured in harness-bench).
+    /// HIKMAH_HOOK_RECORD=<store> appends each engine probability there as a prediction.
     Hook,
     /// Explain the Truth Gate decision (rules verdict, engine probability, path) for a stop event
     /// on stdin, or for JSON lines with `--batch`. Same engine settings and code path as `hook`.
@@ -207,6 +208,15 @@ enum Command {
     Validate {
         #[arg(long, default_value = ".")]
         root: PathBuf,
+    },
+    /// Choose the Truth Gate engine threshold from recorded predictions and outcomes: the
+    /// threshold with the highest recall whose false-block rate stays within the budget.
+    GateThreshold {
+        #[arg(long, default_value = DEFAULT_STORE)]
+        store: PathBuf,
+        /// Largest acceptable false-block rate (blocked true completions / all true completions).
+        #[arg(long, default_value_t = 0.10)]
+        max_false_block: f64,
     },
     /// Print the effective kernel policy (after `--policy` / `HIKMAH_POLICY`), or the defaults.
     Policy {
@@ -482,12 +492,24 @@ fn run() -> Result<()> {
         }
         Command::Hook => {
             let (engine, threshold) = hook_settings();
-            run_stop_hook_with(
+            // Opt-in measurement; recording failures never change the verdict.
+            let record = std::env::var_os("HIKMAH_HOOK_RECORD")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from);
+            run_stop_hook_recording(
                 io::stdin().lock(),
                 io::stdout().lock(),
                 engine.as_deref(),
                 threshold,
+                record.as_deref(),
             )?;
+        }
+        Command::GateThreshold {
+            store,
+            max_false_block,
+        } => {
+            let memory = MemoryStore::open_existing(store, policy()?)?;
+            print_json(&memory.gate_threshold(max_false_block)?)?;
         }
         Command::GateExplain { batch } => {
             let (engine, threshold) = hook_settings();

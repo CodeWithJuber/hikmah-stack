@@ -15,6 +15,31 @@ Fixes for gaps found by the research-to-implementation audit.
 - Added the missing regression test for stale-belief suppression: after a supersession, and after reopening the store, the replaced belief is not recalled by default and the latest correction is. `docs/EVALUATION.md` claimed this coverage before the test existed.
 - Redundancy folding no longer folds or penalizes a claim against a claim it contradicts. Before, two near-identical sentences with different claim values could collapse into one result and hide the disagreement.
 
+### Decisions
+- **Missing evidence is no longer imputed as the average of the known criteria.** Each option now reports `score_interval: [lo, hi]`, with every unscored criterion at the scale minimum for `lo` and at the maximum for `hi`. This is interval arithmetic with no invented prior.
+  - **Ranking.** Admissible options rank by `lo`, then `hi`, then the existing tie-breaks.
+  - **New `decisive` field.** It is true only when the recommended option's `lo` is at least every other admissible option's `hi`.
+  - **Unchanged behaviour.** Hard blocks still rank last. The reversibility preference now compares lower bounds.
+  - **Reference fields.** `raw_score` and `confidence_adjusted_score` are still reported but no longer order the ranking.
+  - **Effect.** An option with one criterion scored 1.0 and three unknown (interval [0.25, 1.0]) used to outrank an option scored 0.6 on all four. It no longer does, and the result is marked not decisive.
+
+### Calibration
+- **`calibrated` now needs statistical support, not just 50 outcomes.** 50 resolved predictions make a family `measurable` (new field). It is `calibrated` only if Spiegelhalter's Z test does not reject calibration at alpha = 0.05 and the Brier skill over the base-rate predictor is positive. Choice and score families use the top-label probability and correctness for both checks. New per-family fields: `z`, `p_value` (normal approximation), `brier_skill`. Previously 50 predictions at p = 0.95 that were all wrong were reported `calibrated: true`; they are now `measurable: true, calibrated: false`. Formulas are in `docs/DECISION_PORT.md`.
+
+### Truth Gate
+- **`gate-explain` parses stdin like the hook.** Without `--batch` it used a strict JSON parse, so a payload with a lone surrogate escape was blocked by `hook` but reported `block: false` by `gate-explain`. Both now share `explain_stop_event`. When the hook would allow without judging (`stop_hook_active`, no message, not an object), `gate-explain` reports that in a new `skipped` field instead of judging anyway.
+- **Python fallback parity for malformed payloads.** `truth_gate.py` now mirrors the Rust three-stage payload parse (strict, with serde_json's strictness on NaN, out-of-range numbers, and lone surrogates; then surrogate-sanitized; then field extraction). A payload with trailing data after the object was blocked by Rust and allowed by Python; both now block. Ten malformed payloads are shared golden cases (`payload_cases` in `hooks/truth_gate_cases.json`).
+- The field-extraction fallback now honours `"stop_hook_active": "true"` and `"1"` (the old pattern required a word character after the closing quote, so with trailing data the loop guard was lost and the hook could block again). Surrogate sanitizing keeps valid escaped surrogate pairs and replaces only unpaired escapes (previously the high half of every pair was replaced).
+
+### Truth Gate threshold from data
+- **Opt-in recording.** When `HIKMAH_HOOK_RECORD=<store>` is set and the engine answered, `hikmah hook` appends that answer to the store as a `prediction` trace, after the verdict is written and flushed:
+  - family `truth_gate.false_completion.v2`, answer space `true`/`false`, and `p`;
+  - the host session id as the locator;
+  - not the message itself.
+
+  Recording failures and panics are swallowed and never change the verdict, output, or exit code.
+- **New `hikmah gate-threshold [--max-false-block 0.10]`.** It pairs those predictions with outcomes (`hikmah outcome --observed true` means the claim was a false completion). It reports the threshold with the highest recall whose empirical false-block rate is within the budget (ties go to the higher threshold), with `n`, recall, false-block rate, a Wilson 95% interval for the false-block rate, and the rates at the 0.6 default. It refuses below 50 resolved predictions or without both classes. This covers the engine path only, and the rates are in-sample.
+
 ### Policy
 - **The kernel policy is configurable from the CLI.** Before, every CLI command used `KernelPolicy::default()`.
   - **Loading a policy.** A new global `--policy <file.json>` (or `HIKMAH_POLICY`) loads a policy JSON. Missing fields keep their defaults. Unknown fields and out-of-range values are rejected, so a typo cannot silently do nothing.
@@ -30,24 +55,11 @@ Fixes for gaps found by the research-to-implementation audit.
   - the 7-day commitment scale, the 0.35 undated urgency, the 0.15 overdue floor, and the 0.5 listing scale.
 - `docs/MEMORY.md` now shows the recall formula the code actually uses (it still showed the 3.0.0 additive sum).
 
-### Decisions
-- **Missing evidence is no longer imputed as the average of the known criteria.** Each option now reports `score_interval: [lo, hi]`, with every unscored criterion at the scale minimum for `lo` and at the maximum for `hi`. This is interval arithmetic with no invented prior.
-  - **Ranking.** Admissible options rank by `lo`, then `hi`, then the existing tie-breaks.
-  - **New `decisive` field.** It is true only when the recommended option's `lo` is at least every other admissible option's `hi`.
-  - **Unchanged behaviour.** Hard blocks still rank last. The reversibility preference now compares lower bounds.
-  - **Reference fields.** `raw_score` and `confidence_adjusted_score` are still reported but no longer order the ranking.
-  - **Effect.** An option with one criterion scored 1.0 and three unknown (interval [0.25, 1.0]) used to outrank an option scored 0.6 on all four. It no longer does, and the result is marked not decisive.
-
 ### Docs
 - `COGNITIVE_KERNEL.md` said the deliberation lanes run concurrently. They run sequentially and deterministically over caller-supplied counts, as the 3.1.0 notes already said. It and `CO_MODEL.md` now say "independent, not concurrent".
 
-### Calibration
-- **`calibrated` now needs statistical support, not just 50 outcomes.** 50 resolved predictions make a family `measurable` (new field). It is `calibrated` only if Spiegelhalter's Z test does not reject calibration at alpha = 0.05 and the Brier skill over the base-rate predictor is positive. Choice and score families use the top-label probability and correctness for both checks. New per-family fields: `z`, `p_value` (normal approximation), `brier_skill`. Previously 50 predictions at p = 0.95 that were all wrong were reported `calibrated: true`; they are now `measurable: true, calibrated: false`. Formulas are in `docs/DECISION_PORT.md`.
-
-### Truth Gate
-- **`gate-explain` parses stdin like the hook.** Without `--batch` it used a strict JSON parse, so a payload with a lone surrogate escape was blocked by `hook` but reported `block: false` by `gate-explain`. Both now share `explain_stop_event`. When the hook would allow without judging (`stop_hook_active`, no message, not an object), `gate-explain` reports that in a new `skipped` field instead of judging anyway.
-- **Python fallback parity for malformed payloads.** `truth_gate.py` now mirrors the Rust three-stage payload parse (strict, with serde_json's strictness on NaN, out-of-range numbers, and lone surrogates; then surrogate-sanitized; then field extraction). A payload with trailing data after the object was blocked by Rust and allowed by Python; both now block. Ten malformed payloads are shared golden cases (`payload_cases` in `hooks/truth_gate_cases.json`).
-- The field-extraction fallback now honours `"stop_hook_active": "true"` and `"1"` (the old pattern required a word character after the closing quote, so with trailing data the loop guard was lost and the hook could block again). Surrogate sanitizing keeps valid escaped surrogate pairs and replaces only unpaired escapes (previously the high half of every pair was replaced).
+### Verification
+- `cargo fmt --check`, both Clippy runs with `-D warnings`, `cargo test --workspace` (111 passed, 1 ignored live Jev test; 83 before these changes), `hikmah validate --root .`, and `python3 hooks/test_truth_gate.py` (37 golden cases and 10 payload cases) all pass.
 
 ## 3.1.0 - 2026-09-21
 

@@ -83,8 +83,9 @@ struct Pair<'a> {
 }
 
 impl MemoryStore {
-    pub fn calibration(&self, family: Option<&str>) -> CalibrationReport {
-        // Latest active outcome per prediction id.
+    /// Latest active outcome per prediction id, written by a non-model principal:
+    /// `prediction id -> (created_at_ms, observed)`.
+    pub(crate) fn latest_outcomes(&self) -> BTreeMap<&str, (u64, &str)> {
         let mut outcomes: BTreeMap<&str, (u64, &str)> = BTreeMap::new();
         for entry in self.all() {
             let trace = &entry.trace;
@@ -103,6 +104,11 @@ impl MemoryStore {
                 }
             }
         }
+        outcomes
+    }
+
+    pub fn calibration(&self, family: Option<&str>) -> CalibrationReport {
+        let outcomes = self.latest_outcomes();
 
         type Key = (String, String, String);
         let mut groups: BTreeMap<Key, (Vec<Pair>, usize)> = BTreeMap::new();

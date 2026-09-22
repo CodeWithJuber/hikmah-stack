@@ -71,6 +71,12 @@ HIKMAH_HOOK_ENGINE=jev TYPESAFE_API_KEY=... hikmah hook < stop-event.json
 # --batch reads {"id", "last_assistant_message"} JSON lines and writes one verdict per line.
 HIKMAH_HOOK_ENGINE=jev TYPESAFE_API_KEY=... hikmah gate-explain < stop-event.json
 hikmah gate-explain --batch < messages.jsonl
+
+# Measure the gate on your own traffic: record each engine probability, record what happened,
+# then choose the threshold with the best recall inside a false-block budget.
+HIKMAH_HOOK_ENGINE=jev HIKMAH_HOOK_RECORD=.hikmah/gate.jsonl TYPESAFE_API_KEY=... hikmah hook < stop-event.json
+hikmah outcome --store .hikmah/gate.jsonl --prediction tr_… --observed true --source ci   # true = it was a false completion
+hikmah gate-threshold --store .hikmah/gate.jsonl --max-false-block 0.10
 ```
 
 Environment:
@@ -83,6 +89,7 @@ Environment:
 | `HIKMAH_JEV_TIMEOUT_MS` | 5000 | Total time budget including retries, clamped to 100 ms..=60 s. The hook always caps it at 3000. |
 | `HIKMAH_HOOK_ENGINE` | unset (rules) | `jev` turns on engine mode in `hikmah hook`. |
 | `HIKMAH_HOOK_THRESHOLD` | 0.6 | The engine adds a block when `P(the completion claim would fail verification)` is at or above this value. Chosen and confirmed in harness-bench (see below). |
+| `HIKMAH_HOOK_RECORD` | unset | A memory store path. When set and the engine answered, `hikmah hook` appends that answer there as a `prediction` trace after writing its verdict. Recording failures never change the verdict or exit code. |
 
 ## Decision frames with engine estimates
 
@@ -151,7 +158,29 @@ harness-bench (a separate repository) measures the gate on real agent finish mes
 
 The v2 gate's gains over v1 are significant: +7.2 points of recall and +0.084 AUROC. Its false-block rate is not significantly different from v1's.
 
-Re-measure on your own traffic: `hikmah ask --record`, record outcomes, then run `hikmah calibration` (family `truth_gate.false_completion.v2`).
+### Choosing the threshold from your own traffic
+
+The 0.6 default was measured on OpenHands/Qwen3-Coder messages. Your agent's messages may differ, so the threshold can be set from your own data:
+
+1. **Record predictions.** Run the hook with `HIKMAH_HOOK_RECORD=<store>`. Each time the engine answers, the hook appends a `prediction` trace to that store after writing its verdict:
+   - family `truth_gate.false_completion.v2`, answer space `["true", "false"]`, and `p` = P(the completion claim is false);
+   - the host `session_id`, when present, as the locator;
+   - not the message itself.
+
+   Rules-only verdicts, engine failures, and skipped events record nothing. A failure to record never changes the verdict or the exit code.
+2. **Record outcomes.** For each recorded prediction, record what happened with `hikmah outcome --prediction <id> --observed true|false`. `true` means the claim was a false completion: the tests for the change failed.
+3. **Choose.** Run `hikmah gate-threshold [--max-false-block 0.10]`. It pairs predictions with their latest active outcome. It then reports the threshold `t` (the engine blocks when `p >= t`) with the highest recall of false completions whose empirical false-block rate stays within the budget. The false-block rate is blocked true completions divided by all true completions. Ties in recall go to the higher threshold. Only observed probabilities are candidates, because the rates change only there. The report also includes:
+   - `n` and the count of each class;
+   - `recall`, `false_block_rate`, and a Wilson 95% interval for the false-block rate;
+   - the same rates at the 0.6 default, for comparison.
+
+It refuses with fewer than 50 resolved predictions, or when either class is absent. When no observed threshold fits the budget, `threshold` is `null`.
+
+Limits:
+
+- This covers the engine path only. The rules still block on their own, so the gate's overall false-block rate can be higher by the rules' own false blocks.
+- The threshold is chosen on the same data it is reported on, so its false-block rate is optimistic. Check it again on outcomes recorded afterwards.
+- `hikmah calibration --family truth_gate.false_completion.v2` reports calibration for the same predictions.
 
 ## What this does not claim
 
