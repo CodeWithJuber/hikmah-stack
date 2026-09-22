@@ -153,3 +153,60 @@ fn inflected_and_mixed_script_words_match() {
     assert_eq!(s.recall(&RecallQuery::new("setting"))[0].trace.id, settings);
     assert_eq!(s.recall(&RecallQuery::new("api bug"))[0].trace.id, bug);
 }
+
+#[test]
+fn superseded_beliefs_are_not_recalled_by_default_but_their_correction_is() {
+    let path = temp_store("stale-belief");
+    let mut s = MemoryStore::open(&path, KernelPolicy::default()).unwrap();
+    let mut old = Trace::new(
+        TraceKind::Belief,
+        "The deploy region is us-east-1",
+        "runbook",
+    );
+    old.claim_key = Some("deploy.region".into());
+    old.claim_value = Some("us-east-1".into());
+    let old = s.remember(old).unwrap().0.id;
+    assert_eq!(
+        s.recall(&RecallQuery::new("deploy region"))[0].trace.id,
+        old
+    );
+
+    let mut fix = Trace::new(
+        TraceKind::Correction,
+        "Correction: the deploy region moved to eu-west-1",
+        "runbook",
+    );
+    fix.claim_key = Some("deploy.region".into());
+    fix.claim_value = Some("eu-west-1".into());
+    fix.supersedes = Some(old.clone());
+    let fix = s.remember(fix).unwrap().0.id;
+
+    // Stale-belief activation: the replaced belief never comes back, even for a query that
+    // matches only its own words; the correction is what recall returns.
+    let results = s.recall(&RecallQuery::new("deploy region"));
+    assert_eq!(results.len(), 1, "{results:#?}");
+    assert_eq!(results[0].trace.id, fix);
+    assert_eq!(results[0].supersedes.as_deref(), Some(old.as_str()));
+    assert!(s.recall(&RecallQuery::new("us-east")).is_empty());
+
+    // A second correction replaces the first; only the latest is active.
+    let mut again = Trace::new(
+        TraceKind::Correction,
+        "Correction: the deploy region is eu-central-1 after the migration",
+        "runbook",
+    );
+    again.claim_key = Some("deploy.region".into());
+    again.claim_value = Some("eu-central-1".into());
+    again.supersedes = Some(fix.clone());
+    let again = s.remember(again).unwrap().0.id;
+    drop(s);
+
+    // Statuses come from replaying the ledger, so a fresh process sees the same thing.
+    let reopened = MemoryStore::open_existing(&path, KernelPolicy::default()).unwrap();
+    let ids: Vec<String> = reopened
+        .recall(&RecallQuery::new("deploy region correction"))
+        .into_iter()
+        .map(|r| r.trace.id)
+        .collect();
+    assert_eq!(ids, vec![again]);
+}

@@ -48,7 +48,7 @@ Structured claims may carry a `claim_key` and `claim_value`. When a new active t
 
 ### 4. Deliberation Lanes
 
-Evidence, memory integrity, irreversible risk, human impact, and delivery completeness run as independent lanes. The current Rust implementation executes these lanes concurrently and returns an explicit arbitration signal.
+Evidence, memory integrity, irreversible risk, human impact, and delivery completeness are independent lanes: each reads only its own input, and none sees another lane's verdict. The current Rust implementation (`council.rs`) evaluates them one after another, sequentially and deterministically, over counts the caller (or an engine, through the typed port) supplies. It returns an explicit arbitration signal: `can_proceed`, the `blocking_lanes`, and one signal per lane. The risk and human-impact lanes veto on a single item. The lanes are rules over counts, not agents or threads. 3.1.0 removed the earlier threads because they added no independence.
 
 ### 5. Branch Loom planner
 
