@@ -109,4 +109,4 @@ Most organizations count only the first term. Count all six.
 
 ## Evidence Snapshots
 
-Empirical numbers age quickly and often apply only to a narrow study design. Keep the operational rules above stable, and consult `docs/EVIDENCE.md` for dated, source-linked snapshots and limitations.
+Empirical numbers age quickly and often apply only to a narrow study design. Keep the operational rules above stable, and, when the full Hikmah Stack repository is available, consult its `docs/EVIDENCE.md` for dated, source-linked snapshots and limitations. When it is not, treat any specific figure as unverified until you check a dated primary source.

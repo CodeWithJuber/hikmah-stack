@@ -6,7 +6,7 @@ description: >
   handling, or human-inspired memory systems. Prefer first-principles cognitive invariants over
   defaulting to vector databases, knowledge graphs, transformers, or fashionable agent patterns.
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   source: "Hikmah Cognitive Kernel"
 ---
 

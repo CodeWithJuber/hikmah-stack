@@ -1,5 +1,13 @@
+//! Deterministic challenge lanes.
+//!
+//! Each lane reads one count supplied by the caller (or by a decision engine through the typed
+//! port) and reports a severity in `[0, 1]`. A lane at or above `BLOCK_AT` blocks. The risk and
+//! human-impact lanes are vetoes: one irreversible action or one unresolved human-impact
+//! question blocks on its own, so those concerns are never averaged away. The other lanes
+//! scale with their count up to a per-lane limit.
 use serde::{Deserialize, Serialize};
-use std::thread;
+
+pub const BLOCK_AT: f32 = 0.8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliberationInput {
@@ -24,71 +32,85 @@ pub enum Lane {
 pub struct LaneSignal {
     pub lane: Lane,
     pub severity: f32,
+    pub veto: bool,
     pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CouncilResult {
     pub can_proceed: bool,
+    pub blocking_lanes: Vec<Lane>,
     pub signals: Vec<LaneSignal>,
 }
 
 pub fn deliberate(input: &DeliberationInput) -> CouncilResult {
-    let signals = thread::scope(|scope| {
-        let evidence = scope.spawn(|| LaneSignal {
+    let signals = vec![
+        LaneSignal {
             lane: Lane::Evidence,
             severity: ratio(input.unverified_consequential_claims, 3),
+            veto: false,
             message: format!(
-                "{} consequential claims still lack verification",
+                "{} consequential claims still lack verification (blocks at 3)",
                 input.unverified_consequential_claims
             ),
-        });
-        let memory = scope.spawn(|| LaneSignal {
+        },
+        LaneSignal {
             lane: Lane::Memory,
             severity: ratio(input.memory_conflicts, 2),
-            message: format!("{} unresolved memory conflicts", input.memory_conflicts),
-        });
-        let risk = scope.spawn(|| LaneSignal {
-            lane: Lane::Risk,
-            severity: ratio(input.irreversible_actions, 2),
+            veto: false,
             message: format!(
-                "{} irreversible actions in scope",
+                "{} unresolved memory conflicts (blocks at 2)",
+                input.memory_conflicts
+            ),
+        },
+        LaneSignal {
+            lane: Lane::Risk,
+            severity: veto(input.irreversible_actions),
+            veto: true,
+            message: format!(
+                "{} irreversible actions in scope (any one blocks until a named owner accepts it)",
                 input.irreversible_actions
             ),
-        });
-        let human_impact = scope.spawn(|| LaneSignal {
+        },
+        LaneSignal {
             lane: Lane::HumanImpact,
-            severity: ratio(input.unresolved_human_impact_questions, 2),
+            severity: veto(input.unresolved_human_impact_questions),
+            veto: true,
             message: format!(
-                "{} unresolved human-impact questions",
+                "{} unresolved human-impact questions (any one blocks)",
                 input.unresolved_human_impact_questions
             ),
-        });
-        let delivery = scope.spawn(|| LaneSignal {
+        },
+        LaneSignal {
             lane: Lane::Delivery,
             severity: ratio(input.missing_acceptance_criteria, 3),
+            veto: false,
             message: format!(
-                "{} acceptance criteria are still missing",
+                "{} acceptance criteria are still missing (blocks at 3)",
                 input.missing_acceptance_criteria
             ),
-        });
-
-        vec![
-            evidence.join().expect("evidence lane panicked"),
-            memory.join().expect("memory lane panicked"),
-            risk.join().expect("risk lane panicked"),
-            human_impact.join().expect("human-impact lane panicked"),
-            delivery.join().expect("delivery lane panicked"),
-        ]
-    });
-
-    let can_proceed = signals.iter().all(|signal| signal.severity < 0.8);
+        },
+    ];
+    let blocking_lanes: Vec<Lane> = signals
+        .iter()
+        .filter(|signal| signal.severity >= BLOCK_AT)
+        .map(|signal| signal.lane)
+        .collect();
     CouncilResult {
-        can_proceed,
+        can_proceed: blocking_lanes.is_empty(),
+        blocking_lanes,
         signals,
     }
 }
 
 fn ratio(value: usize, blocking_at: usize) -> f32 {
     (value as f32 / blocking_at.max(1) as f32).clamp(0.0, 1.0)
+}
+
+fn veto(value: usize) -> f32 {
+    if value > 0 {
+        1.0
+    } else {
+        0.0
+    }
 }

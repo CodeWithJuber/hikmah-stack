@@ -1,0 +1,98 @@
+# Typed Decision Port
+
+The typed decision port (`runtime/hikmah-kernel/src/decision_port.rs`) connects Hikmah to engines that answer **bounded questions with probabilities** instead of prose. Unstructured state goes in; typed, validated decisions come out. The first adapter targets TypeSafe's Jev, a "System One" model. Any engine can implement the same trait.
+
+It sits beside the text-shaped `ProposalEngine`, not in place of it. Text proposals and typed decisions are different contracts.
+
+## Doctrine in code
+
+| Rule | Where it is enforced |
+|---|---|
+| Engines propose, the kernel admits | `admit()` checks every answer against the question that was asked. `AdmittedDecision` is `#[non_exhaustive]`, so code outside the kernel crate cannot construct one. |
+| No silent repair | Any violation rejects the **whole** response: an extra answer, an unknown option, a wrong type, a probability outside [0, 1], a distribution whose sum is off by more than max(0.02, 0.005 × options), a choice that is not the most probable option of its own distribution, a non-canonical score key, a score that disagrees with its distribution, an out-of-range score, a malformed answer, or a request-id mismatch. Every answer then becomes an explicit `abstain` and the reason is kept in `rejected`. |
+| Unknown is a state | Unanswered questions become `abstain`. `NoEngine` abstains on everything, so callers must handle unknown. |
+| Credentials never leave | `ask()` refuses a request whose state, instructions, options, or level labels match common credential shapes, before any engine is called. It uses a linear-time matcher (`secrets.rs`). |
+| Confidence is earned | Engine probabilities pass through as reported, with `calibrated: false`. Calibration comes from recorded outcomes (`hikmah calibration`). |
+| Model output is not memory | Recorded answers become `prediction` traces with a `model:` source. They are never verified, cannot supersede, stay out of default recall, and are not consolidation evidence. |
+| Only non-model principals resolve predictions | An `outcome` trace from a `model:` source is rejected, and the observed value must belong to the prediction's answer space. Purged or superseded outcomes do not count. A prediction without any reported probability is stored with `p: null` and counted as `unscored`, never given an invented probability. |
+| Hard blocks are never averaged away | Engines can estimate decision-criterion scores. `hard_blocks` stay caller- and kernel-owned, and blocked options always rank last. |
+
+## Question types
+
+| Kind | Declares | Admitted answer |
+|---|---|---|
+| `choice` | `options`: map of 2..=255 option ids to meanings | `choice`, `probabilities`, `confidence` |
+| `score` | `levels`: 2..=10 ordered labels, lowest first | `score` (expected level index), `normalized` in [0, 1], nearest `level`, `probabilities`, `confidence` |
+| `noul` | optional `if_true` / `if_false` meanings | `p_true` |
+
+A request holds non-empty `state` (at most 32,000 characters) and 1..=32 questions. Question ids are `[A-Za-z0-9_-]{1,64}`. The optional `family` field names the calibration bucket and defaults to the id.
+
+Example (`examples/decision-request.json`):
+
+```json
+{
+  "state": "Canary deploy: rolls out to 5% of traffic, automatic rollback on error-rate alarms, takes 40 minutes.",
+  "questions": [
+    {"id": "irreversible", "instructions": "Is this plan irreversible?", "type": "noul"},
+    {"id": "safety", "instructions": "How operationally safe is this plan?", "type": "score",
+     "levels": ["very unsafe", "unsafe", "neutral", "safe", "very safe"], "family": "deploy.safety"},
+    {"id": "review", "instructions": "Which review does this change need?", "type": "choice",
+     "options": {"light": "One reviewer", "heavy": "Change advisory board"}}
+  ]
+}
+```
+
+## CLI
+
+```bash
+# Offline: the default engine abstains.
+hikmah ask --request examples/decision-request.json
+
+# Jev (needs TYPESAFE_API_KEY). Record answers as unverified predictions.
+TYPESAFE_API_KEY=... hikmah ask --request examples/decision-request.json --engine jev --record
+
+# Later, a person or CI job records what actually happened.
+hikmah outcome --prediction tr_… --observed false --source oncall
+
+# Calibration per engine and question family: Brier, ECE (5 bins), base rate.
+hikmah calibration
+
+# Let an engine estimate missing criteria for options that have a description.
+TYPESAFE_API_KEY=... hikmah decide --frame examples/decision-frame.json --engine jev
+
+# Truth Gate with Jev as the judge (falls back to the rules on any engine problem).
+HIKMAH_HOOK_ENGINE=jev HIKMAH_HOOK_THRESHOLD=0.8 TYPESAFE_API_KEY=... hikmah hook < stop-event.json
+```
+
+Environment:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TYPESAFE_API_KEY` | unset | Required for `--engine jev`. Never logged. |
+| `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | Alternate endpoint. |
+| `HIKMAH_JEV_MODEL` | `jev-latest` | Model route. |
+| `HIKMAH_JEV_TIMEOUT_MS` | 5000 | Total time budget including retries, clamped to 100 ms..=60 s. The hook always caps it at 3000. |
+| `HIKMAH_HOOK_ENGINE` | unset (rules) | `jev` turns on engine mode in `hikmah hook`. |
+| `HIKMAH_HOOK_THRESHOLD` | 0.8 | Block when `P(false completion)` is at or above this value. |
+
+## Decision frames with engine estimates
+
+Options may carry a free-text `description`. With `--engine`, the kernel asks one score question per missing criterion. Answers are stored in `model_scores`, which count toward `raw_score` but **not** toward `coverage`. An estimated criterion therefore changes the ranking without raising confidence. The output lists every estimate, and every abstention with its reason.
+
+## Jev adapter
+
+`runtime/hikmah-kernel/src/jev.rs`, behind the default `jev` cargo feature:
+
+- It calls `POST /v1/systemone` with bearer auth.
+- It uses `ureq` with the platform certificate verifier, and picks up proxy settings from the environment.
+- It retries 429, 529 and 5xx inside the time budget. Any other failure is returned as an error, which `ask()` turns into an all-abstain decision.
+- An answer it cannot parse (for example `noul: null`) becomes `malformed`, which rejects the whole response.
+- `Debug` redacts the key. Error messages carry only the HTTP status and TypeSafe's `error_type`.
+- Tests inject a transport and replay a response captured from `jev-1.13.0`. A live round trip is available as an ignored test: `HIKMAH_LIVE_JEV=1 TYPESAFE_API_KEY=... cargo test --test jev -- --ignored`.
+- Build without network code: `cargo build --no-default-features`.
+
+## What this does not claim
+
+- The kernel does not verify any engine's claimed accuracy or calibration. It measures calibration only from outcomes you record, and marks a family calibrated only after 50 resolved predictions.
+- The Truth Gate threshold (0.8) is a configuration choice, not a measured operating point.
+- The port does not make an engine's output durable truth. Promotion from a prediction to a belief still needs a non-model principal.

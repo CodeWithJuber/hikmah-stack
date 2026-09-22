@@ -3,7 +3,7 @@ name: operator-core
 description: >
   Use for judgment, leadership, discipline, communication, pressure, recovery, ethics, stewardship, personal effectiveness, or broad life/work operating principles. Apply durable principles without pretending they replace current domain evidence or professional advice.
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   source: "Hikmah Stack Operator Core"
 ---
 
@@ -163,4 +163,4 @@ Human judgment is not only what you think now; it is what you remember, forget, 
 - **Replay outcomes:** reflect on what actually happened after action; plans without outcome memory teach the wrong lesson.
 - **Forget access, not accountability:** reduce attention to stale noise while keeping consequential history auditable under the retention policy.
 
-See `skills/cognitive-kernel/SKILL.md` and `docs/MEMORY.md`.
+For the executable memory contract, use the `cognitive-kernel` skill when it is installed. When the full Hikmah Stack repository is available, its `docs/MEMORY.md` has the detailed design; this protocol stands on its own without either.

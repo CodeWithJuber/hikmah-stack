@@ -5,7 +5,7 @@ description: >
   decision structure, and execution quality. Route deliberately across Operator Core,
   Agent Radar, Decision Forge, and Ship Guard, then synthesize one coherent action plan.
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
 ---
 
 # Hikmah Orchestrator — Cross-Skill Synthesis

@@ -1,12 +1,12 @@
 {
-  "description": "Hikmah Stack completion hygiene gate. Prefers the Rust kernel, with a zero-install compatibility fallback.",
+  "description": "Hikmah Stack completion hygiene gate. Runs an installed hikmah binary, then the zero-install Python fallback; never compiles code at stop time.",
   "hooks": {
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "sh ${PLUGIN_ROOT}/hooks/truth_gate.sh",
+            "command": "sh \"${PLUGIN_ROOT}/hooks/truth_gate.sh\"",
             "timeout": 8,
             "statusMessage": "Running Hikmah Truth Gate"
           }

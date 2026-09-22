@@ -14,7 +14,7 @@ Current reference:
 
 ## Claude Code
 
-The repository keeps a Claude Code manifest, marketplace metadata, a read-only orchestrator subagent, and a prompt-based completion review hook.
+The repository keeps a Claude Code manifest, marketplace metadata, a read-only orchestrator subagent (which preloads all six skills), and two Stop hooks: the deterministic Truth Gate command hook (`hooks/truth_gate.sh`) and a prompt-based completion review. The command hook needs an installed `hikmah` binary (`scripts/install-kernel.sh`, or `bin/hikmah` inside the plugin) or `python3`; without either it allows.
 
 ## Kimi
 

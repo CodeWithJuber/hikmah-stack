@@ -9,6 +9,9 @@ pub struct PlanProblem {
     pub actions: Vec<Action>,
     #[serde(default = "default_max_depth")]
     pub max_depth: usize,
+    /// Hard budget on explored states; the search stops and reports `budget_exhausted`.
+    #[serde(default = "default_max_states")]
+    pub max_states: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,11 +31,23 @@ pub struct PlanResult {
     pub actions: Vec<String>,
     pub final_state: Vec<String>,
     pub explored_states: usize,
+    /// True when `max_states` stopped the search before it could prove no plan exists.
+    #[serde(default)]
+    pub budget_exhausted: bool,
 }
 
 pub fn plan(problem: &PlanProblem) -> Result<PlanResult> {
     if problem.goal.is_empty() {
         return Err(KernelError::Invalid("planning goal cannot be empty".into()));
+    }
+    if problem.max_depth > MAX_DEPTH_LIMIT {
+        return Err(KernelError::Invalid(format!(
+            "max_depth {} exceeds the limit of {MAX_DEPTH_LIMIT}",
+            problem.max_depth
+        )));
+    }
+    if problem.max_states == 0 {
+        return Err(KernelError::Invalid("max_states must be positive".into()));
     }
     let initial: BTreeSet<String> = problem.initial.iter().cloned().collect();
     let goal: BTreeSet<String> = problem.goal.iter().cloned().collect();
@@ -42,6 +57,7 @@ pub fn plan(problem: &PlanProblem) -> Result<PlanResult> {
             actions: Vec::new(),
             final_state: initial.into_iter().collect(),
             explored_states: 1,
+            budget_exhausted: false,
         });
     }
 
@@ -51,7 +67,12 @@ pub fn plan(problem: &PlanProblem) -> Result<PlanResult> {
     seen.insert(state_key(&initial));
     let mut explored = 0_usize;
 
+    let mut budget_exhausted = false;
     while let Some((state, path)) = queue.pop_front() {
+        if explored >= problem.max_states {
+            budget_exhausted = true;
+            break;
+        }
         explored += 1;
         if path.len() >= problem.max_depth {
             continue;
@@ -76,6 +97,7 @@ pub fn plan(problem: &PlanProblem) -> Result<PlanResult> {
                     actions: next_path,
                     final_state: next.into_iter().collect(),
                     explored_states: explored,
+                    budget_exhausted: false,
                 });
             }
             let key = state_key(&next);
@@ -90,6 +112,7 @@ pub fn plan(problem: &PlanProblem) -> Result<PlanResult> {
         actions: Vec::new(),
         final_state: initial.into_iter().collect(),
         explored_states: explored,
+        budget_exhausted,
     })
 }
 
@@ -97,6 +120,12 @@ fn state_key(state: &BTreeSet<String>) -> String {
     state.iter().cloned().collect::<Vec<_>>().join("\u{1f}")
 }
 
+const MAX_DEPTH_LIMIT: usize = 64;
+
 fn default_max_depth() -> usize {
     12
+}
+
+fn default_max_states() -> usize {
+    100_000
 }

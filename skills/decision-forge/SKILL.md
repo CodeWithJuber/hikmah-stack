@@ -3,7 +3,7 @@ name: decision-forge
 description: >
   Use when comparing options, making a consequential choice, planning strategy, assessing risk, resolving conflict, negotiating, or deciding under uncertainty. Structure evidence, alternatives, reversibility, fairness, commitments, and next actions.
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   source: "Hikmah Stack Decision Forge"
 ---
 

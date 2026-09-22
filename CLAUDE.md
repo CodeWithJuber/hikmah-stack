@@ -1,0 +1,67 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+`AGENTS.md` holds the binding architectural rules for this repo (doctrine vs. kernel vs. adapters, no hidden chain-of-thought persistence, no fashionable infrastructure without a named failure and metric). Read it; this file does not restate it.
+
+## Commands
+
+The Cargo workspace has one crate, `runtime/hikmah-kernel` (library `hikmah_kernel`, binary `hikmah`). CI (`.github/workflows/validate.yml`) runs these steps, and all must pass before a change is complete:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings                        # CI denies warnings
+cargo clippy --workspace --all-targets --no-default-features -- -D warnings  # build without the Jev network adapter
+cargo test --workspace
+cargo run -p hikmah-kernel -- validate --root .
+python3 hooks/test_truth_gate.py          # Python fallback against the shared golden cases
+```
+
+CI also runs the kernel tests, the validator, and the hook launcher on `windows-latest`.
+
+Run a single test with `cargo test -p hikmah-kernel --test ledger <test_name>`. Each file in `tests/` is its own test binary, and shared helpers such as `temp_store` and the fixture helpers live in `tests/common/mod.rs`. The live Jev test is `#[ignore]` and needs `HIKMAH_LIVE_JEV=1 TYPESAFE_API_KEY=... cargo test -p hikmah-kernel --test jev -- --ignored`.
+
+For CLI smoke tests, run `cargo run -p hikmah-kernel -- <subcommand>`. The `--help` output lists every subcommand, including `remember`, `recall`, `ask`, `outcome`, `calibration`, `decide`, `hook`, and `validate`. Memory commands default to `.hikmah/memory.jsonl`. Pass `--store <tmp path>` so your experiments stay out of the repo. Read-only commands refuse a store that doesn't exist, and `init` or a write creates it.
+
+On Windows, the default `jev` feature compiles C code (the `ring` crate), so a MinGW or MSVC C toolchain is needed. `--no-default-features` removes all network code.
+
+## Architecture
+
+There are three layers, and each change should stay within its layer:
+
+1. **Portable doctrine** is Markdown only: `skills/*/SKILL.md`, `playbooks/`, and `lenses/`. Skills are installed one directory at a time, so a skill must not link outside its own folder. `validate` enforces this for relative Markdown links.
+2. **Deterministic kernel** is `runtime/hikmah-kernel/src/`. It holds all executable behavior. Model or engine output reaches it only through typed ports.
+3. **Thin host adapters** are `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/`, `kimi.plugin.json`, `agents/hikmah-orchestrator.md`, and `hooks/`.
+
+### Memory: ledger → recall
+
+- `trace.rs` defines `Trace`, which is the unit of memory. A trace is immutable. It carries a kind, provenance (source, authority, locator, and `verified`), confidence, salience, `PrivacyClass`, an optional deadline, an optional claim, and an optional `supersedes` link. Sources starting with `model:` are model-authored. Such traces can never be verified, cannot supersede, stay out of default recall, and are not consolidation evidence.
+- `ledger.rs` defines `MemoryStore`, which is an append-only JSONL file with a hash chain.
+  - **Validate first:** `validate_batch` checks every event before anything touches disk. A bad event must never reach the file, because replay would then fail.
+  - **Record formats:** v1 records (≤3.0.0) hash a re-serialized payload. v2 records hash the exact payload bytes stored on disk. Both must keep verifying, and `tests/fixtures/ledger_v1*.jsonl` guards this. The fixtures must stay byte-exact, and `.gitattributes` marks them `-text` for that reason.
+  - **Writers:** writers take an exclusive lock on the `<store>.lock` sidecar, never on the ledger itself, because Windows locks are mandatory and would block readers. Under the lock, a writer re-reads records other processes appended, repairs a torn tail with `set_len`, and checks the `<store>.head` file so a write can't paper over a truncation. The ledger is opened read+write rather than append-only, because a Windows append handle can't truncate. Every write seeks to the end explicitly.
+  - **Status changes:** `fulfill` and `purge` append status events. Purge is a tombstone, and the content stays on disk.
+- `recall.rs` is relevance-gated. A trace must share a query term or tag, and only then do metadata signals (salience, confidence, recency, provenance, deadline) scale its score. `Sensitive` traces and predictions are excluded unless asked for. `focus.rs` has `MemoryStore::focus`, a `FocusCapsule` bounded by `working_set_limit` that can `absorb` several recalls.
+- `consolidation.rs` only proposes promotions, with source-independence and confidence thresholds from `policy.rs`. `claims.rs` detects conflicts but does not resolve them.
+
+### Decisions and engines
+
+- `decision_port.rs` is the typed decision port. It supports `choice`, `score`, and `noul` questions and defines a `DecisionEngine` trait with `NoEngine` and `StaticEngine`. The engine proposes and `admit()` decides, all or nothing: any violation turns *every* answer into an explicit abstain. `AdmittedDecision` is `#[non_exhaustive]` so nothing outside the crate can forge one. `secrets.rs` scans every outbound string before any engine sees it.
+- `jev.rs` is behind the default `jev` cargo feature. It is the TypeSafe Jev HTTP adapter, configured with `TYPESAFE_API_KEY`, `TYPESAFE_BASE_URL`, and `HIKMAH_JEV_*`. Its tests replay captured responses.
+- `calibration.rs` computes Brier score and ECE from the `prediction` traces and the linked `outcome` traces.
+- `decision.rs` ranks multi-criteria options. A missing criterion counts as unknown, not zero, and engine estimates never raise evidence coverage. Hard blocks always win. `council.rs` runs lanes sequentially, and a single risk or human-impact item can veto. `planner.rs` is bounded by `max_states` and a depth cap.
+- `model_port.rs` (`ProposalEngine` / `NoModel`) is the older free-text proposal boundary.
+
+### Truth Gate
+
+`hook.rs` is the Stop hook. It is a narrow completion-claim check with whole-word matching, negation handling, and code spans skipped. With `HIKMAH_HOOK_ENGINE=jev` it can ask an engine instead, but it has a hard 3 s cap and falls back to the rules. `hooks/truth_gate.py` is the zero-install fallback. **It must stay behaviorally identical to `hook.rs`.** Both are tested against `hooks/truth_gate_cases.json`, so any rule change goes into both files and the shared cases. `hooks/truth_gate.sh` never compiles anything. It tries `bin/hikmah[.exe]`, then `hikmah` on PATH, then `python3`/`python`. It checks each candidate's output, and it always exits 0 with JSON.
+
+### Validator and versions
+
+`validate.rs` backs `hikmah validate`. It checks that required files exist, all manifest JSON parses, the version matches across `Cargo.toml`, the three plugin manifests, and the Claude marketplace, and the plugin name matches everywhere. It also checks that hook script paths exist, that golden cases are present, and that each skill has frontmatter whose `name` equals its directory plus a `description`, and self-contained links. The `metadata.version` in each `skills/*/SKILL.md` and the `CHANGELOG.md` heading are **not** checked, so bump those by hand.
+
+## Repo conventions
+
+- The README and `docs/` use deliberately scoped claims, with "Implemented" / "not claimed" tables. Do not add capability claims the code does not implement. Test counts and benchmark numbers in docs should match what you actually ran.
+- Kernel changes include a test for the invariant they alter (`CONTRIBUTING.md`). Empirical claims in docs need a primary source recorded with its date and limitation (`docs/RESEARCH.md`, `docs/EVIDENCE.md`).
+- `docs/DECISION_PORT.md` is the design reference for the decision port, the Jev adapter, and calibration.

@@ -17,29 +17,32 @@ The table below separates executable evidence from architectural intent.
 
 | Demonstrated capability | Inspectable proof | Evidence level |
 |---|---|---|
-| Typed agent memory with provenance, confidence, privacy, deadlines, claims, and correction links | [`Trace`, `Provenance`, and validation](runtime/hikmah-kernel/src/trace.rs#L92-L174) | Implemented |
-| Append-only, sequence-numbered, hash-chained local ledger | [`MemoryStore::open`, integrity replay, append, and verify](runtime/hikmah-kernel/src/ledger.rs#L51-L228) | Implemented; persistence and replay are tested |
-| Contradiction-aware structured claims | [Conflict detection](runtime/hikmah-kernel/src/claims.rs) and [integration test](runtime/hikmah-kernel/tests/traceweave.rs#L40-L56) | Implemented and tested |
-| Contextual bounded recall using lexical, tag, recency, salience, confidence, provenance, and deadline signals | [Recall scoring and redundancy suppression](runtime/hikmah-kernel/src/recall.rs#L46-L151) and [persistence/recall test](runtime/hikmah-kernel/tests/traceweave.rs#L16-L38) | Implemented and tested |
-| Evidence-preserving consolidation proposals | [`consolidation_proposals`](runtime/hikmah-kernel/src/consolidation.rs#L19-L84) | Implemented; no automatic promotion |
-| Prospective commitment recall | [`commitments_due`](runtime/hikmah-kernel/src/prospective.rs#L13-L33) | Implemented |
-| Bounded symbolic planning | [Planner](runtime/hikmah-kernel/src/planner.rs#L33-L101) and [integration test](runtime/hikmah-kernel/tests/planner.rs) | Implemented and tested |
-| Evidence-adjusted decision ranking with hard blocks and reversibility | [Decision evaluator](runtime/hikmah-kernel/src/decision.rs#L48-L118) and [example frame](examples/decision-frame.json) | Implemented with a runnable example |
-| Independent evidence, memory, risk, human-impact, and delivery checks | [`deliberate`](runtime/hikmah-kernel/src/council.rs#L36-L91) | Implemented as deterministic concurrent checks; not LLM agents |
-| Narrow completion-claim hygiene | [Rust Truth Gate](runtime/hikmah-kernel/src/hook.rs#L6-L78), [shell launcher](hooks/truth_gate.sh), and [Python compatibility fallback](hooks/truth_gate.py) | Implemented; deliberately not a fact-checker |
-| Reusable host packaging | [Codex manifest](.codex-plugin/plugin.json), [Claude manifest](.claude-plugin/plugin.json), [Kimi manifest](kimi.plugin.json), and [portable skills](skills/) | Configuration and instruction layer |
-| Automated validation | [GitHub Actions workflow](.github/workflows/validate.yml) runs formatting, Clippy with warnings denied, Rust tests, package validation, and Python syntax compilation | CI-backed repository validation |
+| Typed agent memory with provenance, confidence, privacy, deadlines, claims, and correction links | [`Trace`, `Provenance`, and validation](runtime/hikmah-kernel/src/trace.rs) | Implemented; model-authored traces can never be marked verified |
+| Append-only, sequence-numbered, hash-chained local ledger | [`MemoryStore`](runtime/hikmah-kernel/src/ledger.rs) and [ledger tests](runtime/hikmah-kernel/tests/ledger.rs) | Implemented and tested: validate-before-write, exclusive file lock, concurrent writers, torn-tail repair, head file for truncation, pinned-head check, legacy v1 ledgers |
+| Contradiction-aware structured claims | [Conflict detection](runtime/hikmah-kernel/src/claims.rs) and [tests](runtime/hikmah-kernel/tests/consolidation.rs) | Implemented and tested (Unicode NFC, case-sensitive values, supersession) |
+| Relevance-gated contextual recall with metadata scaling and duplicate folding | [Recall](runtime/hikmah-kernel/src/recall.rs) and [recall tests](runtime/hikmah-kernel/tests/recall.rs) | Implemented and tested; lexical, not semantic |
+| Evidence-preserving consolidation proposals | [`consolidation_proposals`](runtime/hikmah-kernel/src/consolidation.rs) | Implemented and tested; no automatic promotion; model output never counts as support |
+| Prospective commitments with deadlines and fulfilment | [`commitments_due`](runtime/hikmah-kernel/src/prospective.rs), CLI `--deadline` and `fulfill` | Implemented and tested |
+| Bounded symbolic planning | [Planner](runtime/hikmah-kernel/src/planner.rs) and [tests](runtime/hikmah-kernel/tests/planner.rs) | Implemented and tested (depth and state budgets) |
+| Decision ranking with hard blocks, unknown-not-zero criteria, and a reversibility preference | [Decision evaluator](runtime/hikmah-kernel/src/decision.rs) and [tests](runtime/hikmah-kernel/tests/decisions.rs) | Implemented and tested |
+| Deterministic challenge lanes; risk and human-impact lanes veto on one item | [`deliberate`](runtime/hikmah-kernel/src/council.rs) | Implemented and tested; lanes read counts supplied by the caller; not LLM agents |
+| Typed decision port (choice / score / noul) with all-or-nothing admission | [`decision_port`](runtime/hikmah-kernel/src/decision_port.rs), [tests](runtime/hikmah-kernel/tests/decision_port.rs), [design](docs/DECISION_PORT.md) | Implemented and tested |
+| TypeSafe Jev adapter (opt-in, `jev` feature) | [`jev`](runtime/hikmah-kernel/src/jev.rs) and [tests](runtime/hikmah-kernel/tests/jev.rs) with a captured `jev-1.13.0` response | Implemented; offline tests plus an ignored live test |
+| Outcome write-back and calibration (Brier, ECE) | [`calibration`](runtime/hikmah-kernel/src/calibration.rs), CLI `outcome` and `calibration` | Implemented and tested; a family counts as calibrated only after 50 outcomes |
+| Narrow completion-claim hygiene | [Rust Truth Gate](runtime/hikmah-kernel/src/hook.rs), [launcher](hooks/truth_gate.sh), [Python fallback](hooks/truth_gate.py), [golden cases](hooks/truth_gate_cases.json) | Implemented; Rust and Python pass the same golden cases in CI; deliberately not a fact-checker |
+| Reusable host packaging | [Codex manifest](.codex-plugin/plugin.json), [Claude manifest](.claude-plugin/plugin.json), [Kimi manifest](kimi.plugin.json), and [portable skills](skills/) | Configuration and instruction layer; versions, names, and hook paths checked by `hikmah validate` |
+| Automated validation | [GitHub Actions workflow](.github/workflows/validate.yml): fmt, Clippy (with and without network features), Rust tests, package validation, Python golden cases, hook launcher smoke test | CI-backed repository validation |
 
 ## Maturity boundary
 
 | Area | Current state |
 |---|---|
 | Core runtime | Working Rust CLI and library reference implementation |
-| Persistence | Local append-only JSONL file with tamper-evident hash chaining |
-| Retrieval | Deterministic token/tag/time/provenance scoring; no embeddings |
-| Model integration | A `ProposalEngine` extension boundary plus `NoModel`; no provider adapter ships today |
+| Persistence | Local append-only JSONL, hash-chained over exact payload bytes, with an exclusive write lock, torn-tail repair, and a head file. Tamper evidence holds only while the head file (or a pinned head hash) is out of reach of whoever writes the ledger |
+| Retrieval | Deterministic relevance gate (terms or tags must match), light stemming, CJK bigrams, metadata scaling, duplicate folding; no embeddings |
+| Model integration | Typed `DecisionEngine` port with `NoEngine` and an opt-in TypeSafe Jev adapter; the text `ProposalEngine` still ships only `NoModel` |
 | Agent packaging | Portable instruction skills and thin Codex, Claude Code, and Kimi manifests |
-| Tests | Focused unit/integration coverage for recall, ledger replay, contradictions, and planning |
+| Tests | 79 unit and integration tests covering every capability row; shared Truth Gate golden cases for Rust and Python |
 | Deployment | Local source/CLI use; no hosted service or public production deployment is claimed |
 
 ### What this repository does not claim
@@ -50,8 +53,8 @@ Hikmah Stack does **not** currently implement or claim:
 - RAG, document ingestion, embeddings, reranking, or a vector database;
 - an LLM multi-agent runtime or orchestration through LangGraph, LangChain, Semantic Kernel, AutoGen, CrewAI, or Copilot Studio;
 - a custom LLM tool/function-calling runtime or autonomous execution against external systems;
-- Azure OpenAI, Azure AI Foundry, AWS Bedrock, or another cloud-model integration;
-- a Python AI/GenAI application—the Python file is only a small compatibility fallback for the Truth Gate;
+- Azure OpenAI, Azure AI Foundry, AWS Bedrock, or a general cloud-model integration; the only remote model integration is the opt-in Jev adapter for typed decisions;
+- a Python AI/GenAI application; the Python file is only a small compatibility fallback for the Truth Gate;
 - an HTTP API, MCP server, enterprise application/database/RPA connector, or multi-tenant service;
 - production-scale security, encryption, access control, observability, load testing, or deployment automation.
 
@@ -64,14 +67,15 @@ Hikmah separates generative proposals from durable state and deterministic contr
 ```mermaid
 flowchart TD
     H["Agent host and portable skills"] --> K["Deterministic Rust kernel"]
-    P["Optional proposal engine"] --> K
+    P["Optional proposal engine (text)"] --> K
+    D["Optional decision engine (typed, e.g. Jev)"] --> K
     K --> M["Local hash-chained memory"]
     K --> C["Recall, planning, decisions, gates"]
 ```
 
-The current release ships the kernel and a narrow [`ProposalEngine`](runtime/hikmah-kernel/src/model_port.rs#L21-L36) interface. Its only concrete engine is `NoModel`, so model integration remains outside the present implementation. A future LLM, rules engine, search system, or local model can propose outputs through that boundary without automatically gaining authority over durable memory or policy.
+The kernel exposes two boundaries. The text [`ProposalEngine`](runtime/hikmah-kernel/src/model_port.rs) still ships only `NoModel`. The typed [`DecisionEngine`](runtime/hikmah-kernel/src/decision_port.rs) ships `NoEngine` and an opt-in adapter for TypeSafe's Jev, which answers bounded choice, score, and yes/no questions with probabilities. Either way, engine output is a proposal: the kernel checks every typed answer against the question asked, rejects the whole response on any violation, records answers only as unverified predictions, and earns calibration from outcomes.
 
-See [Architecture](docs/ARCHITECTURE.md), [Cognitive Kernel](docs/COGNITIVE_KERNEL.md), and [Co-Model Architecture](docs/CO_MODEL.md).
+See [Architecture](docs/ARCHITECTURE.md), [Cognitive Kernel](docs/COGNITIVE_KERNEL.md), [Co-Model Architecture](docs/CO_MODEL.md), and [Typed Decision Port](docs/DECISION_PORT.md).
 
 ## Capability stack
 
@@ -93,17 +97,12 @@ A memory is an immutable **trace** with a kind, content, provenance, confidence,
 
 The local ledger is append-only and hash-chained. Corrections can supersede earlier traces without rewriting history, and conflicting structured claims remain visible rather than silently replacing one another.
 
-At recall time, the kernel scores active traces using:
+At recall time, a trace must first match the query's cues (terms or tags). Unrelated memories are never returned, however confident or salient they claim to be. Relevance then sets the score, and metadata can only scale it:
 
-- lexical overlap;
-- explicit tags;
-- recency;
-- salience;
-- confidence;
-- provenance authority and verification state;
-- prospective urgency for commitments.
+- relevance: query-term coverage plus overlap (stopwords removed, light English stemming, character bigrams for CJK text), and tag coverage;
+- metadata: recency, salience, confidence, provenance authority and verification, and commitment urgency.
 
-It then suppresses redundant results to produce a bounded working set. This is a transparent deterministic baseline, not semantic embedding retrieval. Read [Memory](docs/MEMORY.md) and the [Remember → Recall → Consolidate playbook](playbooks/remember-recall-consolidate.md).
+Near-identical traces are folded into one result with a duplicate count. Overdue commitments surface without a cue. Model predictions are excluded unless asked for. This is a transparent deterministic baseline, not semantic embedding retrieval. Read [Memory](docs/MEMORY.md) and the [Remember → Recall → Consolidate playbook](playbooks/remember-recall-consolidate.md).
 
 ## Quick start
 
@@ -142,10 +141,19 @@ cargo run -p hikmah-kernel -- remember \
 cargo run -p hikmah-kernel -- recall \
   --query "why did the deployment fail"
 
+cargo run -p hikmah-kernel -- remember \
+  --kind commitment \
+  --content "Send the incident report to the platform team" \
+  --source incident-review \
+  --deadline +48h
+
 cargo run -p hikmah-kernel -- consolidate
 cargo run -p hikmah-kernel -- commitments --within-hours 168
+cargo run -p hikmah-kernel -- fulfill --id <commitment-trace-id>
 cargo run -p hikmah-kernel -- verify-ledger
 ```
+
+`--source` defaults to `unknown`. Use `model:<engine>` for anything a model wrote; the kernel refuses to mark such traces verified or to let them supersede others. `verify-ledger` exits non-zero when the chain, the head file, or a pinned `--expect-head` does not match. While they disagree, writes are refused; after a deliberate repair, `verify-ledger --reset-head` accepts the current ledger.
 
 By default, local memory is written to `.hikmah/memory.jsonl`.
 
@@ -165,6 +173,24 @@ cargo run -p hikmah-kernel -- deliberate \
   --human-impact-questions 0 \
   --missing-acceptance-criteria 1
 ```
+
+### Typed decisions (optional Jev engine)
+
+```bash
+# Offline: the default engine abstains, so callers must handle "unknown".
+cargo run -p hikmah-kernel -- ask --request examples/decision-request.json
+
+# With TypeSafe Jev: answers are admitted only if every one matches the question asked.
+export TYPESAFE_API_KEY=...
+cargo run -p hikmah-kernel -- ask --request examples/decision-request.json --engine jev --record
+cargo run -p hikmah-kernel -- outcome --prediction <prediction-trace-id> --observed false --source oncall
+cargo run -p hikmah-kernel -- calibration
+
+# Let the engine estimate criteria an option has no evidence for (ranked, never counted as evidence).
+cargo run -p hikmah-kernel -- decide --frame examples/decision-frame.json --engine jev
+```
+
+See [Typed Decision Port](docs/DECISION_PORT.md). Build without any network code with `cargo build --no-default-features`.
 
 ## Portable skills and host adapters
 
@@ -274,6 +300,7 @@ Hikmah ships no credentials, privileged remote service, or external database con
 - The append-only reference ledger is not a complete right-to-delete implementation.
 - A production system handling sensitive data needs an encrypted, access-controlled, deletion-capable storage adapter and an explicit retention policy.
 - The narrow Truth Gate does not fact-check arbitrary model output.
+- Network egress happens only when a decision engine is explicitly selected (`--engine jev` or `HIKMAH_HOOK_ENGINE=jev`) and `TYPESAFE_API_KEY` is set. State that looks like a credential is refused before any call.
 
 Review [Security](SECURITY.md) before enabling executable hooks or adapting the memory layer for sensitive environments.
 
@@ -284,6 +311,7 @@ Hikmah is decision-support infrastructure. It is not a substitute for current qu
 - [Architecture](docs/ARCHITECTURE.md)
 - [Cognitive Kernel](docs/COGNITIVE_KERNEL.md)
 - [Co-Model Architecture](docs/CO_MODEL.md)
+- [Typed Decision Port](docs/DECISION_PORT.md)
 - [Memory](docs/MEMORY.md)
 - [Evaluation Contract](docs/EVALUATION.md)
 - [Research Notes](docs/RESEARCH.md)

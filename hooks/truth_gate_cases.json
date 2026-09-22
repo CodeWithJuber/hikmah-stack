@@ -1,0 +1,153 @@
+{
+  "description": "Golden cases for the Truth Gate deterministic rules. Shared by the Rust hook (tests/hook.rs) and the Python fallback (hooks/test_truth_gate.py). Each case is the last_assistant_message; expect is block or allow.",
+  "cases": [
+    {
+      "message": "Done. TODO: add tests",
+      "expect": "block"
+    },
+    {
+      "message": "Done, I will verify the numbers tomorrow.",
+      "expect": "block"
+    },
+    {
+      "message": "Implemented the parser. I will test it tomorrow.",
+      "expect": "block"
+    },
+    {
+      "message": "Fixed the bug. I'll create a PR next.",
+      "expect": "block"
+    },
+    {
+      "message": "Ready. We will verify in staging.",
+      "expect": "block"
+    },
+    {
+      "message": "Shipped. I’ll send the notes.",
+      "expect": "block"
+    },
+    {
+      "message": "Complete. We'll provide docs.",
+      "expect": "block"
+    },
+    {
+      "message": "Complete. Replace <insert name here>.",
+      "expect": "block"
+    },
+    {
+      "message": "Finished the migration; FIXME: rollback path.",
+      "expect": "block"
+    },
+    {
+      "message": "All tasks completed. I’ll finish the docs later.",
+      "expect": "block"
+    },
+    {
+      "message": "COMPLETED. FIXME: EDGE CASE",
+      "expect": "block"
+    },
+    {
+      "message": "The fix is ready for review; I'll send the PR link after lunch.",
+      "expect": "block"
+    },
+    {
+      "message": "Done ✅ - TODO: añadir tests",
+      "expect": "block"
+    },
+    {
+      "message": "I implemented the todo app you asked for. TODO: styling.",
+      "expect": "block"
+    },
+    {
+      "message": "",
+      "expect": "allow"
+    },
+    {
+      "message": "Done.",
+      "expect": "allow"
+    },
+    {
+      "message": "The migration is incomplete; see TODO list.",
+      "expect": "allow"
+    },
+    {
+      "message": "This was already handled. TODO later.",
+      "expect": "allow"
+    },
+    {
+      "message": "Already covered; owner TBD.",
+      "expect": "allow"
+    },
+    {
+      "message": "This is not done yet; TODO remains.",
+      "expect": "allow"
+    },
+    {
+      "message": "I have not finished; the remaining TODO is the migration.",
+      "expect": "allow"
+    },
+    {
+      "message": "I abandoned the approach; TODO: revisit",
+      "expect": "allow"
+    },
+    {
+      "message": "The change is undone. TODO: re-apply",
+      "expect": "allow"
+    },
+    {
+      "message": "Done. There are no TODOs left.",
+      "expect": "allow"
+    },
+    {
+      "message": "Done. I removed the todo_list variable.",
+      "expect": "allow"
+    },
+    {
+      "message": "Fixed the bug in `todo_service.rs`.",
+      "expect": "allow"
+    },
+    {
+      "message": "Implemented the TodoMVC example.",
+      "expect": "allow"
+    },
+    {
+      "message": "Completed the Mastodon integration.",
+      "expect": "allow"
+    },
+    {
+      "message": "Done; all placeholders have been replaced.",
+      "expect": "allow"
+    },
+    {
+      "message": "Finished. No placeholder text remains.",
+      "expect": "allow"
+    },
+    {
+      "message": "Added placeholder text to the email input. Done.",
+      "expect": "allow"
+    },
+    {
+      "message": "Fixed the null check.\n```\n// TODO(legacy): remove after v4\n```",
+      "expect": "allow"
+    },
+    {
+      "message": "Not done yet: I'll finish the tests tomorrow.",
+      "expect": "allow"
+    },
+    {
+      "message": "TODO: write tests",
+      "expect": "allow"
+    },
+    {
+      "message": "I'll finish the docs later.",
+      "expect": "allow"
+    },
+    {
+      "message": "The Mastodon integration is complete.",
+      "expect": "allow"
+    },
+    {
+      "message": "Released v2; dark mode coming soon is on the roadmap page.",
+      "expect": "allow"
+    }
+  ]
+}

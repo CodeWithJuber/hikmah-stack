@@ -26,6 +26,7 @@ fn branch_loom_finds_short_symbolic_plan() {
             },
         ],
         max_depth: 6,
+        max_states: 10_000,
     };
     let result = plan(&problem).unwrap();
     assert!(result.found);
@@ -33,4 +34,27 @@ fn branch_loom_finds_short_symbolic_plan() {
         result.actions,
         vec!["run_tests", "deploy_canary", "verify_canary"]
     );
+}
+
+#[test]
+fn search_stops_at_the_state_budget() {
+    let actions = (0..16)
+        .map(|i| Action {
+            name: format!("toggle_{i}"),
+            requires: vec![],
+            adds: vec![format!("f{i}")],
+            removes: vec![],
+        })
+        .collect();
+    let problem = PlanProblem {
+        initial: vec![],
+        goal: vec!["unreachable".into()],
+        actions,
+        max_depth: 12,
+        max_states: 5_000,
+    };
+    let result = plan(&problem).unwrap();
+    assert!(!result.found);
+    assert!(result.budget_exhausted);
+    assert!(result.explored_states <= 5_000);
 }

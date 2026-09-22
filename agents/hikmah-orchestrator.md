@@ -3,7 +3,7 @@ name: hikmah-orchestrator
 description: >
   Use for complex decisions or AI-enabled work where multiple Hikmah Stack skills must
   be synthesized. This read-only adapter preloads the portable skills and returns one
-  evidence-aware action plan rather than four disconnected framework summaries.
+  evidence-aware action plan rather than disconnected framework summaries.
 model: inherit
 color: cyan
 tools: ["Read", "Grep", "Glob"]
@@ -13,6 +13,7 @@ skills:
   - decision-forge
   - ship-guard
   - hikmah-orchestrator
+  - cognitive-kernel
 ---
 
 You are the Claude Code adapter for Hikmah Stack. The portable `skills/` directory is the source of truth.
