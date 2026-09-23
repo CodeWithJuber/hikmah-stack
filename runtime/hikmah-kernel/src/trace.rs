@@ -264,7 +264,9 @@ impl Trace {
                 }
                 // The record's `engine` is who forecast. A `model:` source is an engine answer
                 // and names that engine; any other source is a human or agent forecast and names
-                // that principal, so neither can pose as the other in calibration.
+                // that principal. The name alone does not say which class wrote it (a principal
+                // could call itself `jev@…`), so calibration also keys every row by
+                // `is_model_authored()`, and neither class can land in the other's row.
                 let principal = self.provenance.source.trim();
                 let expected = if self.is_model_authored() {
                     &principal[MODEL_SOURCE_PREFIX.len()..]

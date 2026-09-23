@@ -8,11 +8,18 @@
 //! all. Rows are ordered by family, then answer kind, then forecaster, so every forecaster's row
 //! for one family sits next to the others.
 //!
+//! A forecaster is its class and its name. The class comes from the trace's source, not from
+//! the name it records: `engine` for a `model:` source, `principal` for anyone else
+//! (`forecaster_kind`). A person who records forecasts under an engine's name therefore gets a
+//! row of their own, never a share of the engine's.
+//!
 //! A family is `measurable` once it has at least `calibration_min_outcomes` scored predictions
 //! (a [`crate::policy::KernelPolicy`] field, default [`MIN_OUTCOMES`]). Below that its scores are
 //! still reported, labelled `evidence: "anecdotal"` next to their `n`: they describe the
 //! outcomes so far but support no verdict. Sample size is necessary, not sufficient: a family is
-//! reported `calibrated` only when, in addition,
+//! reported `calibrated` only when it has at least [`MIN_OUTCOMES`] scored predictions whatever
+//! the policy says (a policy can raise that floor through `calibration_min_outcomes`, never
+//! lower it), and in addition
 //!
 //! 1. Spiegelhalter's Z test does not reject calibration at alpha = 0.05:
 //!    `Z = Σ (y − p)(1 − 2p) / sqrt(Σ (1 − 2p)² p (1 − p))`, `|Z| < 1.96`
@@ -70,11 +77,27 @@ impl FamilyFilter<'_> {
 
 /// Answer kind of a pooled row: every prediction is scored on its top label.
 pub const POOLED_KIND: &str = "top_label";
+/// `forecaster_kind` of a row whose predictions have a `model:` source.
+pub const ENGINE_FORECASTER: &str = "engine";
+/// `forecaster_kind` of a row whose predictions come from a person or agent.
+pub const PRINCIPAL_FORECASTER: &str = "principal";
+
+fn forecaster_kind(model_authored: bool) -> &'static str {
+    if model_authored {
+        ENGINE_FORECASTER
+    } else {
+        PRINCIPAL_FORECASTER
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FamilyCalibration {
     /// Who forecast: an engine (`jev@jev-1.13.0`) or a person or agent (`human:alex`).
     pub engine: String,
+    /// [`ENGINE_FORECASTER`] when the predictions have a `model:` source, otherwise
+    /// [`PRINCIPAL_FORECASTER`]. Part of the row's identity, so the same `engine` name from the
+    /// two classes gives two rows.
+    pub forecaster_kind: &'static str,
     /// The family, or `<prefix>*` for a pooled row.
     pub family: String,
     /// `noul`, `choice`, `score`, or [`POOLED_KIND`] for a pooled row.
@@ -109,9 +132,10 @@ pub struct FamilyCalibration {
     /// `1 − Brier / Brier(base rate)` (choice/score: top-label binary Brier). Positive means the
     /// probabilities beat always predicting the base rate. `None` when the base rate is 0 or 1.
     pub brier_skill: Option<f64>,
-    /// At least `min_outcomes` scored predictions: enough data to judge calibration.
+    /// At least `min_outcomes` scored predictions: the scores are evidence, not an anecdote.
     pub measurable: bool,
-    /// Measurable, `|z| < 1.96`, and `brier_skill > 0`.
+    /// Measurable, at least [`MIN_OUTCOMES`] scored predictions whatever the policy,
+    /// `|z| < 1.96`, and `brier_skill > 0`.
     pub calibrated: bool,
     pub bins: Vec<CalibrationBin>,
 }
@@ -170,8 +194,9 @@ impl MemoryStore {
         let min_outcomes = self.policy().calibration_min_outcomes;
         let outcomes = self.latest_outcomes();
 
-        // (family, answer kind, forecaster): each forecaster's row for a family is adjacent.
-        type Key = (String, String, String);
+        // (family, answer kind, forecaster class, forecaster): each forecaster's row for a family
+        // is adjacent, and the class keeps a principal out of an engine's row of the same name.
+        type Key = (String, String, &'static str, String);
         let mut groups: BTreeMap<Key, (Vec<Pair>, usize)> = BTreeMap::new();
         let mut unresolved = 0;
         for entry in self.all() {
@@ -190,6 +215,7 @@ impl MemoryStore {
                 .entry((
                     prediction.family.clone(),
                     prediction.answer_kind.clone(),
+                    forecaster_kind(trace.is_model_authored()),
                     prediction.engine.clone(),
                 ))
                 .or_default();
@@ -205,10 +231,10 @@ impl MemoryStore {
 
         let pooled = match filter {
             FamilyFilter::Prefix(prefix) => {
-                let mut by_engine: BTreeMap<&str, (Vec<&Pair>, usize, Vec<String>)> =
-                    BTreeMap::new();
-                for ((family, _, engine), (pairs, unscored)) in &groups {
-                    let slot = by_engine.entry(engine.as_str()).or_default();
+                type Pool<'p> = (Vec<&'p Pair<'p>>, usize, Vec<String>);
+                let mut by_engine: BTreeMap<(&str, &str), Pool> = BTreeMap::new();
+                for ((family, _, kind, engine), (pairs, unscored)) in &groups {
+                    let slot = by_engine.entry((kind, engine.as_str())).or_default();
                     slot.0.extend(pairs.iter());
                     slot.1 += unscored;
                     if !slot.2.contains(family) {
@@ -217,11 +243,11 @@ impl MemoryStore {
                 }
                 by_engine
                     .into_iter()
-                    .map(|(engine, (pairs, unscored, families))| {
+                    .map(|((kind, engine), (pairs, unscored, families))| {
                         let points: Vec<(f64, f64)> = pairs.iter().map(|p| top_label(p)).collect();
                         let brier = mean_squared_error(&points);
                         let mut row = finish(
-                            engine.to_string(),
+                            (kind, engine.to_string()),
                             format!("{prefix}*"),
                             POOLED_KIND.to_string(),
                             points,
@@ -239,8 +265,15 @@ impl MemoryStore {
         };
         let families = groups
             .into_iter()
-            .map(|((family, answer_kind, engine), (pairs, unscored))| {
-                summarize(engine, family, answer_kind, &pairs, unscored, min_outcomes)
+            .map(|((family, answer_kind, kind, engine), (pairs, unscored))| {
+                summarize(
+                    (kind, engine),
+                    family,
+                    answer_kind,
+                    &pairs,
+                    unscored,
+                    min_outcomes,
+                )
             })
             .collect();
         CalibrationReport {
@@ -277,8 +310,11 @@ fn mean_squared_error(points: &[(f64, f64)]) -> f64 {
     points.iter().map(|(p, y)| (p - y).powi(2)).sum::<f64>() / points.len().max(1) as f64
 }
 
+/// A row's forecaster: its class ([`ENGINE_FORECASTER`] or [`PRINCIPAL_FORECASTER`]) and name.
+type Forecaster = (&'static str, String);
+
 fn summarize(
-    engine: String,
+    forecaster: Forecaster,
     family: String,
     answer_kind: String,
     pairs: &[Pair],
@@ -323,7 +359,7 @@ fn summarize(
             / pairs.len().max(1) as f64
     };
     finish(
-        engine,
+        forecaster,
         family,
         answer_kind,
         points,
@@ -338,7 +374,7 @@ fn summarize(
 /// `report_baseline` shows the base-rate Brier (rows whose `brier` is binary).
 #[allow(clippy::too_many_arguments)]
 fn finish(
-    engine: String,
+    (forecaster_kind, engine): Forecaster,
     family: String,
     answer_kind: String,
     points: Vec<(f64, f64)>,
@@ -360,7 +396,10 @@ fn finish(
     // Binary Brier of the tested pair against always predicting its base rate.
     let brier_skill = (n > 0 && base > f64::EPSILON).then(|| 1.0 - top_label_brier / base);
     let measurable = n >= min_outcomes;
+    // The verdict keeps its own sample floor: a policy may ask for more outcomes before a row is
+    // measurable, but it cannot let the Z test certify fewer than MIN_OUTCOMES.
     let calibrated = measurable
+        && n >= MIN_OUTCOMES
         && z.is_some_and(|z| z.abs() < Z_CRITICAL)
         && brier_skill.is_some_and(|skill| skill > 0.0);
 
@@ -389,6 +428,7 @@ fn finish(
 
     FamilyCalibration {
         engine,
+        forecaster_kind,
         family,
         answer_kind,
         pooled_families: Vec::new(),

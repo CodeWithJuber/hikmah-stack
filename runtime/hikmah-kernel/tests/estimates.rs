@@ -8,6 +8,7 @@ use hikmah_kernel::decision::{
 };
 use hikmah_kernel::decision_port::{
     DecisionEngine, DecisionRequest, EngineDescriptor, RawAnswer, RawDecision, MAX_QUESTIONS,
+    MAX_STATE_CHARS,
 };
 use hikmah_kernel::policy::KernelPolicy;
 use hikmah_kernel::trace::TraceKind;
@@ -195,6 +196,52 @@ fn requests_are_split_only_at_the_question_limit() {
     assert_eq!(estimation.estimates.len(), 36);
     assert!(estimation.estimates.iter().all(|e| e.score == Some(0.75)));
     assert_eq!(estimation.prediction_traces().len(), 36);
+}
+
+#[test]
+fn requests_are_split_where_the_state_would_pass_its_limit() {
+    // Two long descriptions cannot share one request's state; a short one still joins the second.
+    let long = |i: usize| {
+        let sentence = format!("Layout {i} keeps the plan finder above the fold. ");
+        sentence.repeat(MAX_STATE_CHARS / 2 / sentence.len() + 1)
+    };
+    let (first, second) = (long(0), long(1));
+    assert!(first.chars().count() < MAX_STATE_CHARS / 2 + 100);
+    let mut frame = DecisionFrame {
+        question: "Which layout?".into(),
+        criteria: vec![criterion("clarity", 0.5), criterion("perf", 0.5)],
+        options: vec![
+            option("layout-0", Some(&first), &[]),
+            option("layout-1", Some(&second), &[]),
+            option("layout-2", Some("A short third layout."), &[]),
+        ],
+    };
+    let engine = Recording::default();
+    let estimation = estimate_missing_criteria(&engine, &mut frame).unwrap();
+
+    let requests = engine.requests.borrow();
+    let ids: Vec<Vec<&str>> = requests
+        .iter()
+        .map(|r| r.questions.iter().map(|q| q.id.as_str()).collect())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            vec!["o0_c0", "o0_c1"],
+            vec!["o1_c0", "o1_c1", "o2_c0", "o2_c1"]
+        ],
+        "split only where the next option's line would not fit"
+    );
+    for request in requests.iter() {
+        request.validate().unwrap();
+        assert!(request.state.chars().count() <= MAX_STATE_CHARS);
+    }
+    // Each request's state carries only the options it asks about.
+    assert!(requests[0].state.contains("layout-0") && !requests[0].state.contains("layout-1"));
+    assert!(!requests[1].state.contains("layout-0"));
+    assert!(requests[1].state.contains("layout-1") && requests[1].state.contains("layout-2"));
+    assert_eq!(estimation.estimates.len(), 6);
+    assert_eq!(estimation.exchanges.len(), 2);
 }
 
 #[test]

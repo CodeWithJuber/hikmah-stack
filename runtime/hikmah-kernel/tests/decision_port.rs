@@ -446,7 +446,13 @@ fn malformed_forecasts_are_refused() {
     anonymous.source = "unknown".into();
     let mut no_family = forecast("noul", 0.7, None, &[]);
     no_family.family = " ".into();
-    for bad in [
+    // A principal names its kind, so its row never reads like an engine identity.
+    let unnamed_sources = ["jev@jev-1.13.0", "juber", "human:", ":juber", "a b:juber"].map(|s| {
+        let mut bad = forecast("noul", 0.7, None, &[]);
+        bad.source = s.into();
+        bad
+    });
+    for bad in unnamed_sources.into_iter().chain([
         engine_source,
         anonymous,
         no_family,
@@ -459,7 +465,41 @@ fn malformed_forecasts_are_refused() {
         forecast("choice", 0.7, Some("a"), &["a", "a"]),
         forecast("score", 0.7, Some("3"), &["0", "1", "2"]),
         forecast("guess", 0.7, None, &[]),
-    ] {
+    ]) {
         assert!(bad.clone().into_trace().is_err(), "accepted {bad:?}");
     }
+    let mut agent = forecast("noul", 0.7, None, &[]);
+    agent.source = "agent:planner".into();
+    assert_eq!(
+        agent.into_trace().unwrap().prediction.unwrap().engine,
+        "agent:planner"
+    );
+}
+
+#[test]
+fn an_engine_version_with_surrounding_whitespace_still_records() {
+    // Jev reports its own version. The source and the record's engine are built from one trimmed
+    // identity, so padding cannot make them disagree and silently stop recording.
+    let request = DecisionRequest::new(
+        "Deploy plan for review.",
+        vec![Question::noul("irreversible", "Is this irreversible?")],
+    )
+    .unwrap();
+    let engine = StaticEngine {
+        descriptor: EngineDescriptor {
+            name: " jev".into(),
+            version: "jev-1.13.0 \n".into(),
+        },
+        answers: BTreeMap::from([("irreversible".into(), RawAnswer::Noul { noul: 0.4 })]),
+    };
+    assert_eq!(engine.descriptor.identity(), "jev@jev-1.13.0");
+    let decision = ask(&engine, &request).unwrap();
+    let traces = decision.prediction_traces(&request);
+    assert_eq!(traces[0].provenance.source, "model:jev@jev-1.13.0");
+    assert_eq!(
+        traces[0].prediction.as_ref().unwrap().engine,
+        "jev@jev-1.13.0"
+    );
+    let mut store = MemoryStore::open(temp_store("padded"), KernelPolicy::default()).unwrap();
+    assert_eq!(store.remember_many(traces).unwrap().len(), 1);
 }

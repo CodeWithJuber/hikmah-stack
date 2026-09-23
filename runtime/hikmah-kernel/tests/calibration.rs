@@ -2,7 +2,8 @@ mod common;
 
 use common::temp_store;
 use hikmah_kernel::calibration::{
-    spiegelhalter_z, FamilyCalibration, FamilyFilter, MIN_OUTCOMES, POOLED_KIND,
+    spiegelhalter_z, FamilyCalibration, FamilyFilter, ENGINE_FORECASTER, MIN_OUTCOMES, POOLED_KIND,
+    PRINCIPAL_FORECASTER, Z_CRITICAL,
 };
 use hikmah_kernel::decision_port::{
     ask, DecisionRequest, EngineDescriptor, Forecast, Question, QuestionKind, RawAnswer,
@@ -214,6 +215,56 @@ fn close(a: f64, b: f64) -> bool {
 }
 
 #[test]
+fn a_principal_named_after_an_engine_never_shares_its_row() {
+    // Review repro: a non-model forecast whose source is the engine's own name. The trace is
+    // valid (its record names its source), but its source is not `model:`, so it is scored as a
+    // principal, apart from the engine it is named after.
+    let jev = |p: f64| {
+        let mut question = Question::noul("lift", "Does this raise plan clicks?");
+        question.family = Some("truth_gate.fail".into());
+        let request = DecisionRequest::new("Hero layout change.", vec![question]).unwrap();
+        let mut engine = engine(RawAnswer::Noul { noul: p }, "lift");
+        engine.descriptor = EngineDescriptor {
+            name: "jev".into(),
+            version: "jev-1.13.0".into(),
+        };
+        ask(&engine, &request)
+            .unwrap()
+            .prediction_traces(&request)
+            .remove(0)
+    };
+    let mut impostor = human_noul("truth_gate.fail", 0.9);
+    impostor.provenance.source = "jev@jev-1.13.0".into();
+    impostor.prediction.as_mut().unwrap().engine = "jev@jev-1.13.0".into();
+    impostor.validate().unwrap();
+    assert!(!impostor.is_model_authored());
+
+    let mut store = MemoryStore::open(temp_store("impostor"), KernelPolicy::default()).unwrap();
+    record(&mut store, jev(0.2), Some("false"));
+    record(&mut store, jev(0.3), Some("false"));
+    record(&mut store, impostor, Some("false"));
+
+    let report = store.calibration_report(FamilyFilter::Prefix("truth_gate"));
+    let rows: Vec<(&str, &str, usize)> = report
+        .families
+        .iter()
+        .map(|f| (f.engine.as_str(), f.forecaster_kind, f.n))
+        .collect();
+    let expected = vec![
+        ("jev@jev-1.13.0", ENGINE_FORECASTER, 2),
+        ("jev@jev-1.13.0", PRINCIPAL_FORECASTER, 1),
+    ];
+    assert_eq!(rows, expected, "one row per class, never merged");
+    assert!(close(report.families[0].brier, (0.04 + 0.09) / 2.0));
+    let pooled: Vec<(&str, &str, usize)> = report
+        .pooled
+        .iter()
+        .map(|f| (f.engine.as_str(), f.forecaster_kind, f.n))
+        .collect();
+    assert_eq!(pooled, expected, "pooling keeps the classes apart too");
+}
+
+#[test]
 fn people_and_engines_are_scored_side_by_side_per_family() {
     let mut store = MemoryStore::open(temp_store("side-by-side"), KernelPolicy::default()).unwrap();
     record(
@@ -359,20 +410,29 @@ fn a_family_prefix_pools_each_forecaster_across_families() {
     assert!(close(human_pool.rate, 1.0));
 }
 
+/// `count` engine forecasts at `p` in one family, `true_count` of which came true.
+fn record_many(store: &mut MemoryStore, batches: &[(f64, usize, usize)]) {
+    for &(p, count, true_count) in batches {
+        for i in 0..count {
+            let observed = if i < true_count { "true" } else { "false" };
+            record(store, engine_noul("hostlelo.hero.ctr", p), Some(observed));
+        }
+    }
+}
+
+fn policy_with_min(calibration_min_outcomes: usize) -> KernelPolicy {
+    KernelPolicy {
+        calibration_min_outcomes,
+        ..KernelPolicy::default()
+    }
+}
+
 #[test]
 fn the_policy_sets_how_many_outcomes_make_a_family_measurable() {
     let path = temp_store("min-outcomes");
     let mut store = MemoryStore::open(&path, KernelPolicy::default()).unwrap();
-    for (p, count, true_count) in [(0.2, 10, 2), (0.8, 10, 8)] {
-        for i in 0..count {
-            let observed = if i < true_count { "true" } else { "false" };
-            record(
-                &mut store,
-                engine_noul("hostlelo.hero.ctr", p),
-                Some(observed),
-            );
-        }
-    }
+    // Exactly calibrated at both levels, and informative.
+    record_many(&mut store, &[(0.2, 10, 2), (0.8, 10, 8)]);
     let default = store.calibration(None);
     assert_eq!(default.min_outcomes, MIN_OUTCOMES);
     let family = &default.families[0];
@@ -383,17 +443,32 @@ fn the_policy_sets_how_many_outcomes_make_a_family_measurable() {
     );
     assert!(!family.measurable && !family.calibrated);
 
-    let relaxed = KernelPolicy {
-        calibration_min_outcomes: 20,
-        ..KernelPolicy::default()
-    };
-    let report = MemoryStore::open_existing(&path, relaxed)
+    let report = MemoryStore::open_existing(&path, policy_with_min(20))
         .unwrap()
         .calibration(None);
     assert_eq!(report.min_outcomes, 20);
     let family = &report.families[0];
     assert_eq!(family.evidence, "measurable");
+    assert!(family.measurable, "{family:?}");
+    // Both tests pass, but a policy cannot lower the verdict's own floor of MIN_OUTCOMES.
+    assert!(family.z.unwrap().abs() < Z_CRITICAL && family.brier_skill.unwrap() > 0.0);
+    assert!(
+        !family.calibrated,
+        "20 outcomes cannot be certified: {family:?}"
+    );
+
+    // The same pattern at 50 outcomes is calibrated by default, and a stricter policy can still
+    // hold the verdict back.
+    record_many(&mut store, &[(0.2, 15, 3), (0.8, 15, 12)]);
+    let family = &store.calibration(None).families[0];
+    assert_eq!(family.n, MIN_OUTCOMES);
     assert!(family.measurable && family.calibrated, "{family:?}");
+    let family = &MemoryStore::open_existing(&path, policy_with_min(60))
+        .unwrap()
+        .calibration(None)
+        .families[0];
+    assert_eq!(family.evidence, "anecdotal");
+    assert!(!family.measurable && !family.calibrated, "{family:?}");
 }
 
 fn hikmah(args: &[&str]) -> (bool, Value, String) {
@@ -487,6 +562,7 @@ fn the_cli_records_forecasts_and_pools_their_calibration() {
     assert_eq!(report["families"].as_array().unwrap().len(), 2);
     let pooled = &report["pooled"][0];
     assert_eq!(pooled["engine"], "human:juber");
+    assert_eq!(pooled["forecaster_kind"], PRINCIPAL_FORECASTER);
     assert_eq!(pooled["n"], 2);
     assert_eq!(pooled["evidence"], "anecdotal");
     // (0.7 − 1)² and (0.6 − 0)², averaged.
@@ -507,23 +583,29 @@ fn the_cli_records_forecasts_and_pools_their_calibration() {
     assert_eq!(report["min_outcomes"], 2);
     assert_eq!(report["pooled"][0]["evidence"], "measurable");
 
-    // Refusals: an engine source, a prediction through `remember`, both filters at once.
-    let (ok, _, stderr) = hikmah(&[
-        "predict",
-        "--store",
-        store,
-        "--family",
-        "hostlelo.hero.ctr",
-        "--question",
-        "Does the hero raise plan clicks?",
-        "--type",
-        "noul",
-        "--p",
-        "0.7",
-        "--source",
-        "model:jev@1",
-    ]);
-    assert!(!ok && stderr.contains("record them with"), "{stderr}");
+    // Refusals: an engine source, a source named like an engine, a prediction through
+    // `remember`, both filters at once.
+    for (source, message) in [
+        ("model:jev@1", "record them with"),
+        ("jev@jev-1.13.0", "must be `<kind>:<name>`"),
+    ] {
+        let (ok, _, stderr) = hikmah(&[
+            "predict",
+            "--store",
+            store,
+            "--family",
+            "hostlelo.hero.ctr",
+            "--question",
+            "Does the hero raise plan clicks?",
+            "--type",
+            "noul",
+            "--p",
+            "0.7",
+            "--source",
+            source,
+        ]);
+        assert!(!ok && stderr.contains(message), "{source}: {stderr}");
+    }
     let (ok, _, stderr) = hikmah(&[
         "remember",
         "--store",

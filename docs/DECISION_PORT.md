@@ -16,7 +16,7 @@ It sits beside the text-shaped `ProposalEngine`, not in place of it. Text propos
 | Model output is not memory | Recorded answers become `prediction` traces with a `model:` source. They are never verified, cannot supersede, stay out of default recall, and are not consolidation evidence. |
 | Only non-model principals resolve predictions | An `outcome` trace from a `model:` source is rejected, and the observed value must belong to the prediction's answer space. Purged or superseded outcomes do not count. A prediction without any reported probability is stored with `p: null` and counted as `unscored`, never given an invented probability. |
 | Hard blocks are never averaged away | Engines can estimate decision-criterion scores. `hard_blocks` stay caller- and kernel-owned, blocked options always rank last, and `decide` never sends a blocked option to the engine. |
-| A forecast is not a fact, whoever made it | A person's or agent's forecast (`hikmah predict`) is a `prediction` trace too. No prediction can be marked verified, whatever its source. A prediction's forecaster must match its source (`model:jev@…` records `jev@…`; `human:alex` records `human:alex`), so a person cannot write an engine's calibration row or the reverse. `predict` refuses `model:` sources, and `gate-threshold` counts only engine predictions. |
+| A forecast is not a fact, whoever made it | A person's or agent's forecast (`hikmah predict`) is a `prediction` trace too. No prediction can be marked verified, whatever its source. A prediction's forecaster must match its source (`model:jev@…` records `jev@…`; `human:alex` records `human:alex`). Calibration keys every row by the source's class as well as that name (`forecaster_kind`: `engine` for a `model:` source, `principal` otherwise), so a person cannot write an engine's calibration row, even under the engine's name, and an engine cannot write a person's. `predict` refuses `model:` sources and wants `<kind>:<name>`, and `gate-threshold` counts only engine predictions. |
 
 ## Question types
 
@@ -106,6 +106,8 @@ Environment:
 
 Options may carry a free-text `description`. With `--engine`, the kernel asks one score question (levels `very poor` … `excellent`) per missing criterion of every option that has a description and no hard block. A blocked option can never be recommended, so an estimate for it could not change the result; it is listed in `skipped_blocked` instead of being sent. All questions share one request, with ids `o{option index}_c{criterion index}`, and the request is split only where it would pass 32 questions or 32,000 characters of state; each request's state holds the decision question and the description of every option it asks about. `engine_requests` reports how many were sent. The frame is validated before anything is sent. With `--record`, every admitted estimate is stored as an unverified `prediction` trace (family `decide.<criterion id>`, level indices `0`..`4` as the answer space), all in one ledger batch, and `recorded_predictions` lists their ids. `--record` without an engine is refused.
 
+Sharing a request widens what one failure costs. Admission is all or nothing per request, so one malformed or out-of-range answer about one option leaves every estimate in that request unscored, each listed with the rejection as its `reason` (before, only that option's estimates were lost). A timeout does the same: the whole request, up to 32 questions, runs on one engine time budget (`HIKMAH_JEV_TIMEOUT_MS`, default 5000 ms), where each option used to have its own. Raise the budget for large frames. An unscored criterion is not an error: it stays unknown in `score_interval`, exactly as without an engine.
+
 Answers are stored in `model_scores`. They count as point values in the option's `score_interval`, and toward `raw_score`, but **not** toward `coverage`. An estimated criterion therefore narrows `score_interval` and can change the ranking, but it never raises confidence. It never makes a result decisive either: `evidence_interval` treats it as unknown. The output lists every estimate, and every abstention with its reason.
 
 Ranking uses the interval. With no engine, or where the engine abstains, a criterion stays unscored. It is then counted at the scale minimum (0) for `lo` and at the maximum (1) for `hi`:
@@ -125,14 +127,14 @@ Admissible options rank by `lo`, then `hi`, then reversible first, then name. `d
 | `--question` | What is being forecast, in words. |
 | `--type noul --p P` | `P` is the probability of `true`. It takes no `--value` or `--answer-space`. |
 | `--type choice\|score --p P --value V --answer-space A,B,…` | `P` is the probability of `V`, which must be one of the answer space (choice: 2–255 option ids; score: 2–10 levels, lowest first). Engine score families record level indices, so use `0,1,2,3,4` to share a `decide.*` family. |
-| `--source` | Who forecast, for example `human:alex` or `agent:planner`. Required; `model:` sources and `unknown` are refused. |
+| `--source` | Who forecast, as `<kind>:<name>`: for example `human:alex` or `agent:planner`. Required; `model:` sources, `unknown`, and a source without a kind (such as `jev@jev-1.13.0`) are refused. |
 | `--locator` | Where the forecast was made, for example a decision record. |
 
-The trace is a `prediction` with the source as its forecaster (`engine: "human:alex"`). It is never verified, stays out of default recall and consolidation, and is resolved with `hikmah outcome` like any prediction. For choice and score forecasts only `P(value)` is known; the rest of the distribution is not invented, so such a row's `brier` is the top-label binary Brier. `top_label_brier` compares forecasters on the same footing.
+The trace is a `prediction` with the source as its forecaster (`engine: "human:alex"`), scored in rows with `forecaster_kind: "principal"`. It is never verified, stays out of default recall and consolidation, and is resolved with `hikmah outcome` like any prediction. For choice and score forecasts only `P(value)` is known; the rest of the distribution is not invented, so such a row's `brier` is the top-label binary Brier. `top_label_brier` compares forecasters on the same footing.
 
 ## Calibration verdict
 
-`hikmah calibration` groups resolved predictions by family, answer kind, and forecaster (an engine such as `jev@jev-1.13.0`, or a person or agent such as `human:alex`), in that order, so every forecaster's row for one family is adjacent. For each group it reports Brier, ECE over 5 equal-width bins, the observed rate, and two tests. Each test uses pairs `(p, y)`:
+`hikmah calibration` groups resolved predictions by family, answer kind, and forecaster (an engine such as `jev@jev-1.13.0`, or a person or agent such as `human:alex`), in that order, so every forecaster's row for one family is adjacent. A forecaster is its class and its name: `forecaster_kind` is `engine` when the predictions have a `model:` source and `principal` otherwise, and it comes from the trace's source, not from the name the record carries. A principal who records forecasts under an engine's name gets a row of its own. For each group it reports Brier, ECE over 5 equal-width bins, the observed rate, and two tests. Each test uses pairs `(p, y)`:
 
 - **Noul families:** `p = P(true)`, and `y = 1` when the outcome was `true`.
 - **Choice and score families (top-label view):** `p` is the probability of the reported answer, and `y = 1` when the outcome equals it.
@@ -142,10 +144,10 @@ The trace is a `prediction` with the source as its forecaster (`engine: "human:a
 | `z` | `Σ (y − p)(1 − 2p) / sqrt(Σ (1 − 2p)² p (1 − p))` | Spiegelhalter's Z statistic, approximately standard normal when the probabilities are calibrated. `null` when the variance term is zero (for example every `p` in {0, 0.5, 1}). |
 | `p_value` | `erfc(abs(z) / √2)` | Two-sided p-value of `z` from the normal approximation. |
 | `brier_skill` | `1 − B / (r (1 − r))` | Brier skill against always predicting the observed base rate `r`. Noul: `B` is the family Brier and `r` the share of `true`. Choice/score: `B` is the binary Brier of `(p, y)` and `r` the top-label accuracy. `null` when `r` is 0 or 1, because nothing beats a constant outcome in-sample. |
-| `measurable` | `n >= calibration_min_outcomes` | Enough resolved predictions to judge. The minimum is a policy field (default 50). |
+| `measurable` | `n >= calibration_min_outcomes` | Enough resolved predictions for the scores to count as evidence. The minimum is a policy field (default 50). |
 | `evidence` | `anecdotal` or `measurable` | Below the minimum, the scores are still reported with their `n`, labelled `anecdotal`: they describe the outcomes so far and support no verdict either way. |
 | `top_label_brier` | mean `(p − y)²` over the tested pairs | Binary Brier of the probability the verdict tests. Equal to `brier` for noul; for choice and score it is comparable across forecasters, including forecasts that carry only `P(value)`. |
-| `calibrated` | `measurable ∧ abs(z) < 1.96 ∧ brier_skill > 0` | The Z test does not reject calibration at alpha = 0.05, and the probabilities carry information beyond the base rate. |
+| `calibrated` | `measurable ∧ n >= 50 ∧ abs(z) < 1.96 ∧ brier_skill > 0` | The Z test does not reject calibration at alpha = 0.05, and the probabilities carry information beyond the base rate. The floor of 50 (`MIN_OUTCOMES`) is code, like the 1.96: a policy can raise it through `calibration_min_outcomes` but cannot lower it, so no configuration lets the Z test certify a handful of outcomes. |
 
 **Pooling.** One family for one forecaster version can take a long time to reach the minimum. `--family-prefix <prefix>` reports every family that starts with the prefix and adds `pooled`: one row per forecaster over all of them (`family: "<prefix>*"`, `answer_kind: "top_label"`, `pooled_families` listing what went in). A pooled row scores every prediction on its top label: for a noul forecast, the probability of the side it leaned to (`true` when `P(true) >= 0.5`) and whether that side happened; for choice and score, the probability of the reported answer. Its `brier`, `z`, and `brier_skill` use those pairs. The binary Brier of a noul forecast is the same in either view, so pooling does not change what a noul family scores. Pooling answers "how good is this forecaster across these questions", not "is this family calibrated".
 
@@ -155,7 +157,7 @@ Limits:
 
 - The base rate is in-sample, which slightly favours the baseline, so the skill check is conservative.
 - The Z test has little power on small or narrow samples.
-- `calibrated: false` with `measurable: true` means the data contradict calibration, or the forecasts add nothing over the base rate.
+- `calibrated: false` with `measurable: true` means the data contradict calibration, the forecasts add nothing over the base rate, or (with `calibration_min_outcomes` below 50) the row has fewer than the verdict's 50 outcomes.
 - For choice and score families, the multiclass `brier` field is still reported, but the verdict uses only the top-label pair.
 - A pooled row mixes questions of different difficulty. A forecaster can look calibrated in the pool while miscalibrated on one family; check the family rows too.
 
@@ -217,6 +219,6 @@ Limits:
 
 ## What this does not claim
 
-- The kernel does not verify any engine's claimed accuracy or calibration. It measures calibration only from outcomes you record. `calibration_min_outcomes` resolved predictions (default 50) make a family `measurable`; a smaller policy value makes the label easier to reach, not the evidence stronger. A family is marked `calibrated` only when the tests in [Calibration verdict](#calibration-verdict) also pass. Passing them means the data do not contradict calibration; it is not proof of it, and a family can drift after it passed.
+- The kernel does not verify any engine's claimed accuracy or calibration. It measures calibration only from outcomes you record. `calibration_min_outcomes` resolved predictions (default 50) make a family `measurable`; a smaller policy value makes the label easier to reach, not the evidence stronger. A family is marked `calibrated` only with at least 50, whatever the policy, and only when the tests in [Calibration verdict](#calibration-verdict) also pass. Passing them means the data do not contradict calibration; it is not proof of it, and a family can drift after it passed.
 - The Truth Gate engine mode is a screen, not a verifier. On real agent "done" messages it catches a minority of false completions (about one in six in harness-bench run 1, at a false-block rate under 10%), because most false completions read exactly like true ones. Execution evidence (tests actually run) is what catches the rest.
 - The port does not make an engine's output durable truth. Promotion from a prediction to a belief still needs a non-model principal.

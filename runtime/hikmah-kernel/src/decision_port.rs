@@ -223,8 +223,16 @@ pub struct EngineDescriptor {
 }
 
 impl EngineDescriptor {
+    /// `name@version`, trimmed: the forecaster a prediction record names. An engine reports its
+    /// own version (Jev's response `model` field), so surrounding whitespace is dropped here,
+    /// once, and the trace source and the record always name the same engine.
+    pub fn identity(&self) -> String {
+        format!("{}@{}", self.name.trim(), self.version.trim())
+    }
+
+    /// `model:<identity>`: the provenance source of this engine's answers.
     pub fn source(&self) -> String {
-        format!("{MODEL_SOURCE_PREFIX}{}@{}", self.name, self.version)
+        format!("{MODEL_SOURCE_PREFIX}{}", self.identity())
     }
 }
 
@@ -491,7 +499,7 @@ impl AdmittedDecision {
                 question_id: question.id.clone(),
                 family: question.family().to_string(),
                 answer_kind: answer_kind.into(),
-                engine: format!("{}@{}", self.engine.name, self.engine.version),
+                engine: self.engine.identity(),
                 p,
                 value,
                 probabilities,
@@ -506,8 +514,9 @@ impl AdmittedDecision {
 
 /// A forecast made by a person or an agent (`hikmah predict`), recorded in the same
 /// [`PredictionRecord`] shape as an engine answer so `hikmah calibration` can score both on the
-/// same family. The record's `engine` is the source principal (for example `human:alex`), so
-/// the two get separate rows. A forecast is never verified; an outcome resolves it.
+/// same family. The record's `engine` is the source principal (for example `human:alex`), and
+/// calibration keys rows by source class as well as name, so the two always get separate rows.
+/// A forecast is never verified; an outcome resolves it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Forecast {
     /// Calibration bucket, shared with any engine that forecasts the same thing.
@@ -523,15 +532,16 @@ pub struct Forecast {
     pub value: Option<String>,
     /// Choice: the option ids. Score: the levels, lowest first. Noul: empty (`true`/`false`).
     pub answer_space: Vec<String>,
-    /// Who forecast, for example `human:alex` or `agent:planner`. Never a `model:` source.
+    /// Who forecast, as `<kind>:<name>`: for example `human:alex` or `agent:planner`. Never a
+    /// `model:` source.
     pub source: String,
     /// Where the forecast was made, for example a decision record.
     pub locator: Option<String>,
 }
 
 impl Forecast {
-    /// Validate the forecast and build its `prediction` trace. Engine answers are refused here:
-    /// they are recorded from an admitted decision, so no one can hand-write an engine's row.
+    /// Validate the forecast and build its `prediction` trace. Engine answers (`model:`
+    /// sources) are refused here: they are recorded from an admitted decision.
     pub fn into_trace(self) -> Result<Trace> {
         let invalid = |message: String| Err(KernelError::Invalid(message));
         let source = self.source.trim().to_string();
@@ -543,6 +553,21 @@ impl Forecast {
         if source.to_ascii_lowercase().starts_with(MODEL_SOURCE_PREFIX) {
             return invalid(format!(
                 "`{MODEL_SOURCE_PREFIX}` sources are engine answers; record them with `hikmah ask --record` or `hikmah decide --record`"
+            ));
+        }
+        // A principal names its kind (`human:alex`, `agent:planner`), so a forecaster's row never
+        // reads like an engine identity such as `jev@jev-1.13.0`. Calibration also keeps the two
+        // classes apart by source (`forecaster_kind`), whatever a principal calls itself.
+        let named_principal = source.split_once(':').is_some_and(|(kind, name)| {
+            !kind.is_empty()
+                && kind
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                && !name.trim().is_empty()
+        });
+        if !named_principal {
+            return invalid(format!(
+                "forecast source `{source}` must be `<kind>:<name>`, for example `human:alex` or `agent:planner`"
             ));
         }
         if family.is_empty() || question.is_empty() {

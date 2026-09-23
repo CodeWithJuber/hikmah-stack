@@ -143,7 +143,8 @@ enum Command {
     },
     /// Rank a decision frame. With `--engine`, options that have a `description` and no hard
     /// block get missing criteria estimated by the engine in one request (ranked, but never
-    /// counted as evidence).
+    /// counted as evidence). A rejected or timed-out request leaves every estimate in it
+    /// unscored; `HIKMAH_JEV_TIMEOUT_MS` sets the engine's time budget per request.
     Decide {
         #[arg(long)]
         frame: PathBuf,
@@ -204,7 +205,8 @@ enum Command {
         /// family with engine score questions, which record level indices). Comma-separated.
         #[arg(long, value_delimiter = ',')]
         answer_space: Vec<String>,
-        /// Who forecast, for example `human:alex` or `agent:planner`. Not a `model:` source.
+        /// Who forecast, as `<kind>:<name>`: for example `human:alex` or `agent:planner`. Not a
+        /// `model:` source.
         #[arg(long)]
         source: String,
         /// Where the forecast was made, for example `DECISIONS.md#hero`.
@@ -217,7 +219,9 @@ enum Command {
         store: PathBuf,
         #[arg(long)]
         prediction: String,
-        /// `true`/`false` for noul, the option id for choice, the level index for score.
+        /// One of the prediction's answer space: `true`/`false` for noul, the option id for
+        /// choice, and for score the level as recorded (a level index for engine answers, the
+        /// level name for a forecast recorded with named levels).
         #[arg(long)]
         observed: String,
         #[arg(long)]
