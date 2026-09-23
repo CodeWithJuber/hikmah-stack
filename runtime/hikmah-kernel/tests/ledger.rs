@@ -629,6 +629,47 @@ fn a_reader_that_saw_a_write_in_flight_does_not_raise_a_false_alarm() {
 }
 
 #[test]
+fn a_head_that_moved_part_of_the_way_lists_only_the_unacknowledged_records() {
+    // A reader loads head seq 1 and 3 records; by the time it verifies, a legitimate write's head
+    // update has landed at seq 2, and record 3 is a forged append. Only record 3 is unacknowledged,
+    // and the listing must agree with what `accept_tail` would accept.
+    let path = temp_store("head-part-way");
+    let mut writer = open(&path);
+    writer.remember(note("first")).unwrap();
+    let head_path = writer.head_path();
+    let head_at_one = fs::read(&head_path).unwrap();
+    writer.remember(note("second")).unwrap();
+    let head_at_two = fs::read(&head_path).unwrap();
+    drop(writer);
+    forge_append(&path, forged_claim());
+
+    fs::write(&head_path, &head_at_one).unwrap();
+    let reader = open(&path);
+    assert_eq!(reader.record_count(), 3);
+    fs::write(&head_path, &head_at_two).unwrap();
+
+    let report = reader.verify_report(None).unwrap();
+    assert!(!report.ok, "{report:?}");
+    let listed: Vec<u64> = report.unacknowledged.iter().map(|r| r.seq).collect();
+    assert_eq!(
+        listed,
+        [3],
+        "the legitimate record 2 is not listed: {report:?}"
+    );
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.starts_with("1 record(s)") && e.contains("(seq 2)")),
+        "{report:?}"
+    );
+    assert_eq!(
+        open(&path).accept_tail().unwrap().accepted,
+        report.unacknowledged
+    );
+}
+
+#[test]
 fn unacknowledged_record_listings_never_echo_a_credential() {
     let path = temp_store("forged-secret");
     let mut store = open(&path);

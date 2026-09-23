@@ -641,13 +641,15 @@ impl MemoryStore {
                         "record {} does not match the head file hash: the ledger was rewritten",
                         stored.seq
                     ));
-                } else if stored.seq < count && !self.snapshot_acknowledged_now() {
-                    unacknowledged = self.summaries_after(stored.seq);
-                    errors.push(format!(
-                        "{} record(s) after the recorded head (seq {}) were never acknowledged by a hikmah write: appended by another program, written by an older binary, or left by a crash before the head update. Writes are refused until a person inspects them and runs `hikmah verify-ledger --accept-tail` from their own terminal",
-                        count - stored.seq,
-                        stored.seq
-                    ));
+                } else if stored.seq < count {
+                    let acknowledged = self.acknowledged_now(stored.seq);
+                    if acknowledged < count {
+                        unacknowledged = self.summaries_after(acknowledged);
+                        errors.push(format!(
+                            "{} record(s) after the recorded head (seq {acknowledged}) were never acknowledged by a hikmah write: appended by another program, written by an older binary, or left by a crash before the head update. Writes are refused until a person inspects them and runs `hikmah verify-ledger --accept-tail` from their own terminal",
+                            count - acknowledged
+                        ));
+                    }
                 }
             }
         }
@@ -681,13 +683,17 @@ impl MemoryStore {
 
     /// A lock-free reader can load the ledger while a write is in flight: the writer syncs its
     /// records before it updates the head, so this snapshot may hold records its head snapshot
-    /// does not cover yet. Only in that case, wait for in-flight writes to finish (a shared lock
-    /// on the `<store>.lock` sidecar, which every writer holds exclusively until its head update
-    /// has landed), then re-read the head and, if it has moved past this snapshot, the ledger.
-    /// Returns whether every record in this snapshot is acknowledged by the head now.
-    fn snapshot_acknowledged_now(&self) -> bool {
+    /// (`loaded_seq`) does not cover yet. Only in that case, wait for in-flight writes to finish (a
+    /// shared lock on the `<store>.lock` sidecar, which every writer holds exclusively until its
+    /// head update has landed), then re-read the head and, if it has moved past this snapshot, the
+    /// ledger. Returns how many leading records of this snapshot the head acknowledges now: all of
+    /// them when every write completed, the new head's seq when it moved only part of the way (so
+    /// a legitimate record is never listed beside a forged one), and `loaded_seq` when the head
+    /// cannot be confirmed.
+    fn acknowledged_now(&self, loaded_seq: u64) -> u64 {
+        let n = self.records.len() as u64;
         let Some(last) = self.records.last() else {
-            return true;
+            return n;
         };
         let lock = OpenOptions::new()
             .write(true)
@@ -698,20 +704,19 @@ impl MemoryStore {
         // Without the lock an in-flight write cannot be told apart from an unacknowledged tail;
         // report the tail rather than guess.
         let Ok(lock) = lock else {
-            return false;
+            return loaded_seq;
         };
         if lock.lock_shared().is_err() {
-            return false;
+            return loaded_seq;
         }
-        let n = self.records.len() as u64;
         match read_head(&self.head_path()) {
-            HeadState::Present(now) if now.seq == n => now.hash == last.hash,
+            HeadState::Present(now) if now.seq == n && now.hash == last.hash => n,
             HeadState::Present(now) if now.seq > n => {
                 // Confirm this snapshot is a prefix of the ledger that the newer head covers.
                 let Ok(fresh) = Self::load(self.path.clone(), self.policy.clone()) else {
-                    return false;
+                    return loaded_seq;
                 };
-                match &fresh.head_at_load {
+                let covered = match &fresh.head_at_load {
                     HeadState::Present(head) => {
                         head.seq >= n
                             && head.seq <= fresh.records.len() as u64
@@ -719,9 +724,21 @@ impl MemoryStore {
                             && fresh.records[(n - 1) as usize].hash == last.hash
                     }
                     _ => false,
+                };
+                if covered {
+                    n
+                } else {
+                    loaded_seq
                 }
             }
-            _ => false,
+            HeadState::Present(now)
+                if now.seq > loaded_seq
+                    && now.seq < n
+                    && self.records[(now.seq - 1) as usize].hash == now.hash =>
+            {
+                now.seq
+            }
+            _ => loaded_seq,
         }
     }
 
