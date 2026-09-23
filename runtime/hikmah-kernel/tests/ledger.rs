@@ -452,6 +452,11 @@ fn notes_that_describe_a_secret_are_stored_but_values_are_not() {
         "client_secret=x9K2pQ7vR4mT8wZ1 in the vault",
         "TYPESAFE_API_KEY=server-only, DB_PASSWORD=hunter2hunter2",
         "wifi password=summer-2024",
+        // Words with a trailing number, or a date with no event word, are passwords.
+        "DB_PASSWORD=admin_pass123",
+        "mysql root password: super-secret1",
+        "api_key=ADMIN_PASS1",
+        "ADMIN_PASSWORD=admin-pass-2024-09",
     ] {
         assert!(
             matches!(store.remember(note(content)), Err(KernelError::Invalid(_))),

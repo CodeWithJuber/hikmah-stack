@@ -58,21 +58,32 @@ fn is_reference_or_placeholder(value: &str) -> bool {
 /// An assignment value that describes a secret instead of being one:
 /// - a chain of two or more lowercase words joined by `-` or `_` (`server-only`,
 ///   `hashed_with_argon2id`, `hostlelo-whmcs-creds`);
-/// - such words ending in an ISO year-month or date (`rotated-2026-09`);
+/// - words ending in an event word and an ISO year-month or date (`rotated-2026-09`,
+///   `key-issued-2026-09-01`): the word just before the date must end in `ed`;
 /// - an environment variable *name* (`TYPESAFE_API_KEY`).
 ///
-/// A word is letters with at most one run of digits inside (`argon2id`, `sha256`), and the first
-/// word is letters only, so random tokens (`ts_live_f9a8b7c6`) still count as values. So do a
-/// single word (`changeme123`, `princess`) and a word plus a bare number (`summer-2024`), because
-/// common human passwords look like that. The known gap: a lowercase passphrase made of words
-/// (`correct-horse-battery-staple`) reads as prose and is not flagged.
+/// A word never ends in a digit: at most one run of digits sits between its letters
+/// (`argon2id`). So `pass123`, `secret1`, `hunter2` or `PASS1` anywhere in the value makes it
+/// count as a credential, and so do `sha256` and `oauth2`. The first word is letters only, at
+/// least two of them, so random tokens (`ts_live_f9a8b7c6`) and `p_assw0rd` still count as
+/// values. So do a single word (`changeme123`, `princess`), a word plus a bare number
+/// (`summer-2024`), and words plus a date with no event word (`admin-pass-2024-09`), because
+/// common human passwords look like that.
+///
+/// The known gap: a value made only of lowercase words, with at most a digit run *inside* a later
+/// word, reads as prose and is not flagged. That covers keyboard walks (`qwerty_asdf`),
+/// passphrases (`correct-horse-battery-staple`), word pairs (`admin_pass`), and leetspeak after
+/// the first word (`my_p4ssw0rd`).
 fn is_description(value: &str) -> bool {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        let word = "[a-z]+[0-9]*[a-z]*";
-        let name_word = "[A-Z]+[0-9]*[A-Z]*";
+        let first = "[a-z]{2,}";
+        let word = "[a-z]+(?:[0-9]+[a-z]+)?";
+        let date = "[0-9]{4}-[0-9]{2}(?:-[0-9]{2})?";
+        let name_first = "[A-Z]{2,}(?:[0-9]+[A-Z]+)?";
+        let name_word = "[A-Z]+(?:[0-9]+[A-Z]+)?";
         Regex::new(&format!(
-            "^(?:[a-z]+(?:[-_]{word})+|[a-z]+(?:[-_]{word})*[-_][0-9]{{4}}-[0-9]{{2}}(?:-[0-9]{{2}})?|{name_word}(?:_{name_word})+)$"
+            "^(?:{first}(?:[-_]{word})+|(?:{first}(?:[-_]{word})*[-_])?[a-z]+ed[-_]{date}|{name_first}(?:_{name_word})+)$"
         ))
         .expect("description regex")
     });
@@ -119,8 +130,31 @@ mod tests {
             "API_KEY=ts_live_4f9a8b7c6d5e4f3a",
             "API_KEY=ts_live_f9a8b7c6d5e4f3a1",
             "DB_PASSWORD=X9K2P0QZ7TRM_AB12CD34",
+            // Words plus digits, and words plus a date, are human passwords, not descriptions.
+            // Each was stored by an earlier version of the description rule (review, 2026-09).
+            "DB_PASSWORD=admin_pass123",
+            "password=hunter_hunter2",
+            "wifi password=welcome-home1",
+            "mysql root password: super-secret1",
+            "password=summer_fun2024",
+            "password=p_assw0rd",
+            "api_key=ADMIN_PASS1",
+            "ADMIN_PASSWORD=admin-pass-2024-09",
+            "client_secret=x_rotated-2026-09",
         ] {
             assert!(contains_secret(sample), "missed: {sample}");
+        }
+    }
+
+    #[test]
+    fn known_gap_lowercase_word_values_read_as_descriptions() {
+        // Documented, not desired: a value made only of lowercase words is indistinguishable from
+        // a description such as `server-only`. If this starts failing, update the docs.
+        for sample in [
+            "db_password=qwerty_asdf",
+            "password=correct-horse-battery-staple",
+        ] {
+            assert!(!contains_secret(sample), "gap closed? {sample}");
         }
     }
 
@@ -139,6 +173,8 @@ mod tests {
             "\"secret_name\": \"WHMCS_API_SECRET\"",
             "Key rotation note: api_key_rotation=quarterly-via-vault, last rotated 2026-09-01.",
             "The WHMCS api_key: configured-in-env.",
+            "client_secret=key-issued-2026-09-01 by the platform team",
+            "password=stored_as_argon2id_hash",
         ] {
             assert!(!contains_secret(sample), "false positive: {sample}");
         }
