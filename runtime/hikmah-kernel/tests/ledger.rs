@@ -463,3 +463,30 @@ fn a_file_that_is_not_a_ledger_is_never_truncated() {
     open(&torn).remember(note("after the crash")).unwrap();
     assert_eq!(open(&torn).record_count(), 1);
 }
+
+#[test]
+fn remember_many_writes_every_trace_or_none() {
+    let path = temp_store("remember-many");
+    let mut store = open(&path);
+    store.remember(note("already stored")).unwrap();
+
+    // Identical content and timestamps still get distinct ids within one batch.
+    let first = note("same words");
+    let mut second = note("same words");
+    second.created_at_ms = first.created_at_ms;
+    let stored = store.remember_many(vec![first, second]).unwrap();
+    assert_eq!(stored.len(), 2);
+    assert_ne!(stored[0].0.id, stored[1].0.id);
+    assert_eq!(line_count(&path), 3);
+
+    // One invalid trace fails the whole batch before anything is written.
+    let mut model_verified =
+        Trace::new(TraceKind::Observation, "claims to be checked", "model:x@1");
+    model_verified.provenance.verified = true;
+    assert!(store
+        .remember_many(vec![note("would be fine"), model_verified])
+        .is_err());
+    assert_eq!(line_count(&path), 3);
+    assert_eq!(open(&path).record_count(), 3);
+    assert!(store.remember_many(Vec::new()).unwrap().is_empty());
+}
