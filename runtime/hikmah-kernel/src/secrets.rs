@@ -55,9 +55,74 @@ fn is_reference_or_placeholder(value: &str) -> bool {
             .any(|prefix| lower.starts_with(prefix))
 }
 
+/// Words that make a lowercase word chain read as a description of where or how a secret is
+/// kept (`server-only`, `hashed_with_argon2id`, `configured-in-env`, `quarterly-via-vault`,
+/// `hostlelo-whmcs-creds`) rather than as the secret itself. A chain with none of them
+/// (`correct-horse-battery-staple`, `qwerty_asdf`, `admin_pass`) is a passphrase: refused.
+const DESCRIBING_WORDS: &[&str] = &[
+    "as",
+    "at",
+    "by",
+    "for",
+    "from",
+    "in",
+    "into",
+    "of",
+    "on",
+    "only",
+    "via",
+    "with",
+    "without",
+    "not",
+    "never",
+    "no",
+    "see",
+    "set",
+    "stored",
+    "hashed",
+    "hash",
+    "encrypted",
+    "env",
+    "environment",
+    "vault",
+    "kms",
+    "managed",
+    "manager",
+    "rotated",
+    "rotation",
+    "redacted",
+    "masked",
+    "configured",
+    "mounted",
+    "provided",
+    "loaded",
+    "injected",
+    "server",
+    "client",
+    "side",
+    "runtime",
+    "config",
+    "settings",
+    "dashboard",
+    "creds",
+    "credentials",
+    "placeholder",
+    "unset",
+    "none",
+    "empty",
+    "required",
+    "daily",
+    "weekly",
+    "monthly",
+    "quarterly",
+    "yearly",
+    "annually",
+];
+
 /// An assignment value that describes a secret instead of being one:
-/// - a chain of two or more lowercase words joined by `-` or `_` (`server-only`,
-///   `hashed_with_argon2id`, `hostlelo-whmcs-creds`);
+/// - a chain of two or more lowercase words joined by `-` or `_` that contains a describing
+///   word (`server-only`, `hashed_with_argon2id`, `hostlelo-whmcs-creds`; see
+///   [`DESCRIBING_WORDS`]);
 /// - words ending in an event word and an ISO year-month or date (`rotated-2026-09`,
 ///   `key-issued-2026-09-01`): the word just before the date must end in `ed`;
 /// - an environment variable *name* (`TYPESAFE_API_KEY`).
@@ -67,28 +132,30 @@ fn is_reference_or_placeholder(value: &str) -> bool {
 /// count as a credential, and so do `sha256` and `oauth2`. The first word is letters only, at
 /// least two of them, so random tokens (`ts_live_f9a8b7c6`) and `p_assw0rd` still count as
 /// values. So do a single word (`changeme123`, `princess`), a word plus a bare number
-/// (`summer-2024`), and words plus a date with no event word (`admin-pass-2024-09`), because
-/// common human passwords look like that.
-///
-/// The known gap: a value made only of lowercase words, with at most a digit run *inside* a later
-/// word, reads as prose and is not flagged. That covers keyboard walks (`qwerty_asdf`),
-/// passphrases (`correct-horse-battery-staple`), word pairs (`admin_pass`), and leetspeak after
-/// the first word (`my_p4ssw0rd`).
+/// (`summer-2024`), words plus a date with no event word (`admin-pass-2024-09`), and a word
+/// chain with no describing word (`correct-horse-battery-staple`, `qwerty_asdf`, `admin_pass`),
+/// because common human passwords and passphrases look like that.
 fn is_description(value: &str) -> bool {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        let first = "[a-z]{2,}";
-        let word = "[a-z]+(?:[0-9]+[a-z]+)?";
+    static CHAIN: OnceLock<Regex> = OnceLock::new();
+    static OTHER: OnceLock<Regex> = OnceLock::new();
+    let first = "[a-z]{2,}";
+    let word = "[a-z]+(?:[0-9]+[a-z]+)?";
+    let chain = CHAIN.get_or_init(|| {
+        Regex::new(&format!("^{first}(?:[-_]{word})+$")).expect("description chain regex")
+    });
+    let other = OTHER.get_or_init(|| {
         let date = "[0-9]{4}-[0-9]{2}(?:-[0-9]{2})?";
         let name_first = "[A-Z]{2,}(?:[0-9]+[A-Z]+)?";
         let name_word = "[A-Z]+(?:[0-9]+[A-Z]+)?";
         Regex::new(&format!(
-            "^(?:{first}(?:[-_]{word})+|(?:{first}(?:[-_]{word})*[-_])?[a-z]+ed[-_]{date}|{name_first}(?:_{name_word})+)$"
+            "^(?:(?:{first}(?:[-_]{word})*[-_])?[a-z]+ed[-_]{date}|{name_first}(?:_{name_word})+)$"
         ))
         .expect("description regex")
     });
     // Sentence punctuation after the value is not part of it.
-    re.is_match(value.trim_end_matches(['.', '!', '?', ':', ')']))
+    let v = value.trim_end_matches(['.', '!', '?', ':', ')']);
+    other.is_match(v)
+        || (chain.is_match(v) && v.split(['-', '_']).any(|w| DESCRIBING_WORDS.contains(&w)))
 }
 
 /// True when `text` contains something shaped like a credential.
@@ -147,14 +214,16 @@ mod tests {
     }
 
     #[test]
-    fn known_gap_lowercase_word_values_read_as_descriptions() {
-        // Documented, not desired: a value made only of lowercase words is indistinguishable from
-        // a description such as `server-only`. If this starts failing, update the docs.
+    fn passphrase_like_word_chains_are_credentials() {
+        // A lowercase word chain with no describing word is a passphrase, not a description.
         for sample in [
             "db_password=qwerty_asdf",
             "password=correct-horse-battery-staple",
+            "admin password: admin_pass",
+            "password=my_p4ssw0rd",
+            "wifi password=blue-elephant-sunrise",
         ] {
-            assert!(!contains_secret(sample), "gap closed? {sample}");
+            assert!(contains_secret(sample), "missed: {sample}");
         }
     }
 
