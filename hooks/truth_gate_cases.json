@@ -1,5 +1,5 @@
 {
-  "description": "Golden cases for the Truth Gate deterministic rules. Shared by the Rust hook (tests/hook.rs) and the Python fallback (hooks/test_truth_gate.py). Each case is the last_assistant_message; expect is block or allow. payload_cases are raw Stop-hook stdin payloads (malformed on purpose) that both implementations must parse to the same verdict.",
+  "description": "Golden cases for the Truth Gate deterministic rules. Shared by the Rust hook (tests/hook.rs) and the Python fallback (hooks/test_truth_gate.py). Each case is the last_assistant_message; expect is block or allow; note, when present, says why. payload_cases are raw Stop-hook stdin payloads (malformed on purpose) that both implementations must parse to the same verdict.",
   "cases": [
     {
       "message": "Done. TODO: add tests",
@@ -148,6 +148,151 @@
     {
       "message": "Released v2; dark mode coming soon is on the roadmap page.",
       "expect": "allow"
+    },
+    {
+      "message": "Done. The .ai domain page now shows a Coming soon badge as requested, and the build passes.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: coming soon names a UI badge"
+    },
+    {
+      "message": "Fixed the currency bug and all 42 tests pass. If you want, I'll also update the changelog.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: an offer left to the user"
+    },
+    {
+      "message": "Implemented the TODO list widget for the dashboard; lint, typecheck and tests pass.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: TODO names a feature"
+    },
+    {
+      "message": "Updated the search input placeholder. Done.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: the placeholder of an input"
+    },
+    {
+      "message": "Fixed: the TODO comment in proxy.ts about www redirects is now handled.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: a TODO comment that was handled"
+    },
+    {
+      "message": "The PR is ready. Once you approve, we will deploy it via CI.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: a step that waits for the user's approval"
+    },
+    {
+      "message": "Done. TODO: wire up the WHMCS fallback.",
+      "expect": "block",
+      "note": "HostLelo review 2026-09: an open TODO marker"
+    },
+    {
+      "message": "Implemented the pricing page. I will test it on mobile tomorrow.",
+      "expect": "block",
+      "note": "HostLelo review 2026-09: deferred testing"
+    },
+    {
+      "message": "Fixed the pricing bug; unit tests pass. Not committed yet, and the e2e suite is still running.",
+      "expect": "allow",
+      "note": "honest status: not committed, still running"
+    },
+    {
+      "message": "Done: lint and typecheck pass. CI will run the e2e suite on push.",
+      "expect": "allow",
+      "note": "CI will run is not a first-person promise"
+    },
+    {
+      "message": "Fixed the header. When you're ready, I'll push the branch.",
+      "expect": "allow",
+      "note": "an offer left to the user"
+    },
+    {
+      "message": "Implemented the plan finder. Let me know and I'll add a test for the empty state.",
+      "expect": "allow",
+      "note": "an offer left to the user"
+    },
+    {
+      "message": "Fixed the redirect. I'll push it once you approve.",
+      "expect": "allow",
+      "note": "the user's condition may follow the promise"
+    },
+    {
+      "message": "Finished. The input placeholder now reads 'Search domains'.",
+      "expect": "allow",
+      "note": "the placeholder of an input"
+    },
+    {
+      "message": "Done. The badge now reads \"Coming soon\".",
+      "expect": "allow",
+      "note": "a quoted term is mentioned, not used"
+    },
+    {
+      "message": "Done. The todo app now persists items.",
+      "expect": "allow",
+      "note": "todo names a feature"
+    },
+    {
+      "message": "Fixed the header. I'll push the branch later.",
+      "expect": "block",
+      "note": "deferred step with no user condition"
+    },
+    {
+      "message": "Implemented the finder. Once it's merged I will test it on mobile.",
+      "expect": "block",
+      "note": "the condition is not left to the user"
+    },
+    {
+      "message": "Done. We will run the e2e suite tomorrow.",
+      "expect": "block",
+      "note": "deferred verification"
+    },
+    {
+      "message": "Fixed the currency bug. If you want, I'll update the changelog, and I'll run the e2e suite later.",
+      "expect": "block",
+      "note": "an offer cannot excuse a second promise"
+    },
+    {
+      "message": "Fixed the currency bug. If you want, I'll update the changelog; I'll run the e2e suite later.",
+      "expect": "block",
+      "note": "an offer cannot excuse a promise in another clause"
+    },
+    {
+      "message": "Implemented the finder; tests are still running and I'll share the results later.",
+      "expect": "block",
+      "note": "honest, but a deliverable is still deferred: only an opted-in engine lift can excuse it"
+    },
+    {
+      "message": "Done. There is one TODO comment left in proxy.ts.",
+      "expect": "block",
+      "note": "a TODO comment that is still open"
+    },
+    {
+      "message": "Done. The pricing section is coming soon.",
+      "expect": "block",
+      "note": "coming soon as unfinished work"
+    },
+    {
+      "message": "Done. Coming soon: annual billing.",
+      "expect": "block",
+      "note": "coming soon as unfinished work"
+    },
+    {
+      "message": "Implemented the checkout. The pricing table is still a placeholder.",
+      "expect": "block",
+      "note": "a placeholder that stands in for work"
+    },
+    {
+      "message": "Done. TODO (styling) remains.",
+      "expect": "block",
+      "note": "a TODO marker"
+    },
+    {
+      "message": "Done. The café placeholder remains.",
+      "expect": "block",
+      "note": "a non-ASCII letter right before a term (crashed the Rust rules once)"
+    },
+    {
+      "message": "Ready. \"é placeholder",
+      "expect": "block",
+      "note": "a quote and a non-ASCII letter before a term"
     }
   ],
   "payload_cases": [

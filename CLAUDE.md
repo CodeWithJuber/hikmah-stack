@@ -54,7 +54,7 @@ There are three layers, and each change should stay within its layer:
 
 ### Truth Gate
 
-`hook.rs` is the Stop hook. It is a narrow completion-claim check with whole-word matching, negation handling, and code spans skipped. `HIKMAH_HOOK_ENGINE=jev` adds an engine screen:
+`hook.rs` is the Stop hook. It is a narrow completion-claim check with whole-word matching, negation handling, and code spans skipped. A term that names a thing is not a marker (`the TODO list widget`, `a Coming soon badge`, `the search input placeholder`, a quoted term), and a promise whose clause leaves it to the user (`If you want, I'll ...`) is an offer. `HIKMAH_HOOK_ENGINE=jev` adds an engine screen:
 
 - **Question and threshold:** the engine estimates whether the completion claim would fail a test run of the change, and it blocks at `p >= 0.6` by default. Both the question wording and the threshold were measured in harness-bench (see `docs/EVIDENCE.md`). Changing either invalidates that evidence.
 - **The rules are a hard floor.** A rules block always stands; the engine can only add blocks.

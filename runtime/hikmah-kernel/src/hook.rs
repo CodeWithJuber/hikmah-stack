@@ -10,7 +10,15 @@
 //!   character except newline to a space) and use ASCII word boundaries, so the Rust and Python
 //!   implementations agree on unusual Unicode;
 //! - block only when an un-negated completion claim co-occurs with an un-negated unfinished
-//!   marker or a first-person future-work promise.
+//!   marker or a first-person future-work promise;
+//! - a word that names a thing is not a marker: `todo`, `tbd` or `fixme` followed by a noun such
+//!   as `list`, `app` or `comment` (`the TODO list widget`) unless the same clause says it is
+//!   still open (`one TODO comment is left`); `coming soon` followed by UI words such as `badge`
+//!   or `page`; `placeholder` after `input`, `search` or `field`, or before `text`; and any of
+//!   these right after an opening quote (`the badge reads "Coming soon"`);
+//! - a promise whose clause leaves it to the user is an offer, not deferred work
+//!   (`If you want, I'll ...`, `Once you approve, we will ...`, `let me know`); the condition
+//!   cannot reach past a neighbouring promise.
 //!
 //! Optional engine mode: a typed decision engine (for example Jev) estimates the probability that
 //! the completion claim would fail verification (a test run of the requested change). The gate
@@ -61,6 +69,10 @@ struct Rules {
     completion: Regex,
     unfinished: Regex,
     promise: Regex,
+    /// A condition that leaves the promised step to the user: `If you want, I'll ...`.
+    user_gate: Regex,
+    /// A word saying a task marker is still open: `a TODO comment is left`.
+    still_open: Regex,
 }
 
 fn rules() -> &'static Rules {
@@ -80,6 +92,14 @@ fn rules() -> &'static Rules {
             r"(?-u:\b)(i|we)(?:'ll| +will| +shall) +(?:(?:also|then|still|now|soon|later|next) +)?(finish|complete|upload|create|test|verify|send|provide|add|write|fix|update|run|check|share|push|deploy|follow up)(?-u:\b)",
         )
         .expect("promise regex"),
+        user_gate: Regex::new(
+            r"(?-u:\b)(?:(?:if|once|when|whenever|after|as soon as|should|unless) +you|let me know|would you like)(?-u:\b)",
+        )
+        .expect("user gate regex"),
+        still_open: Regex::new(
+            r"(?-u:\b)(?:remain|remains|remaining|left|outstanding|pending|unresolved)(?-u:\b)",
+        )
+        .expect("still open regex"),
     })
 }
 
@@ -106,7 +126,63 @@ const COMPLETION_NEGATORS: &[&str] = &[
 const UNFINISHED_NEGATORS: &[&str] = &[
     "no", "without", "zero", "removed", "remove", "replaced", "resolved", "cleared",
 ];
-const PLACEHOLDER_UI_TERMS: &[&str] = &["text", "attribute", "prop", "image", "color", "value"];
+/// Words after `placeholder` that make it a UI property: `placeholder text`.
+const PLACEHOLDER_UI_TERMS: &[&str] = &[
+    "text",
+    "attribute",
+    "prop",
+    "image",
+    "color",
+    "value",
+    "copy",
+];
+/// Words before `placeholder` that make it a UI property: `the search input placeholder`.
+const PLACEHOLDER_UI_OWNERS: &[&str] = &[
+    "input",
+    "inputs",
+    "search",
+    "field",
+    "fields",
+    "textarea",
+    "form",
+    "attribute",
+    "select",
+];
+/// Words after `coming soon` that make it UI copy: `a Coming soon badge`.
+const COMING_SOON_UI_TERMS: &[&str] = &[
+    "badge", "badges", "banner", "label", "labels", "page", "pages", "state", "pill", "tag",
+    "text", "copy", "message", "screen", "section", "card", "notice", "ribbon", "chip",
+];
+/// Words after `todo`, `tbd` or `fixme` that make it the name of a thing, not a marker:
+/// `the TODO list widget`, `the todo app`. A marker still counts when the same clause says it is
+/// open (`one TODO comment is left`).
+const MARKER_NOUNS: &[&str] = &[
+    "list",
+    "lists",
+    "app",
+    "apps",
+    "widget",
+    "widgets",
+    "item",
+    "items",
+    "comment",
+    "comments",
+    "component",
+    "components",
+    "feature",
+    "page",
+    "view",
+    "board",
+    "tracker",
+    "example",
+    "entry",
+    "entries",
+];
+/// Characters between a term and the word it modifies: `TODO list`, `TODO-list`, `"Coming soon" badge`.
+const WORD_GAP: &[char] = &[' ', '-', '"', '\'', '\u{201c}', '\u{201d}'];
+/// A term right after an opening quote is mentioned, not used: `the "Coming soon" badge`.
+const QUOTES: &[char] = &['"', '\'', '\u{201c}', '\u{201d}'];
+const CLAUSE_END: [char; 5] = ['.', '!', '?', '\n', ';'];
 
 fn normalize(message: &str) -> String {
     let mut text = String::with_capacity(message.len());
@@ -156,10 +232,94 @@ fn negated(text: &str, start: usize, negators: &[&str]) -> bool {
         .any(|w| negators.contains(&w) || w.ends_with("n't"))
 }
 
-fn next_word(text: &str, start: usize) -> Option<&str> {
-    text[start..]
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .find(|w| !w.is_empty())
+/// The word right after `end`, across spaces, hyphens, and quotes only (so `TODO: list` has none).
+fn next_word(text: &str, end: usize) -> Option<&str> {
+    let rest = text[end..].trim_start_matches(WORD_GAP);
+    let len = rest
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(rest.len());
+    (len > 0).then(|| &rest[..len])
+}
+
+/// The word right before `start`, across spaces, hyphens, and quotes only.
+fn previous_word(text: &str, start: usize) -> Option<&str> {
+    let head = text[..start].trim_end_matches(WORD_GAP);
+    // Trimming (not `rfind(..) + 1`) keeps the cut on a char boundary after a non-ASCII letter.
+    let from = head
+        .trim_end_matches(|c: char| c.is_ascii_alphanumeric())
+        .len();
+    (from < head.len()).then(|| &head[from..])
+}
+
+/// Up to `NEGATION_WINDOW_CHARS` characters after `end`, cut at the first of `stops`.
+fn text_after<'a>(text: &'a str, end: usize, stops: &[char]) -> &'a str {
+    let tail = &text[end..];
+    let window = tail
+        .char_indices()
+        .nth(NEGATION_WINDOW_CHARS)
+        .map_or(tail, |(i, _)| &tail[..i]);
+    window.find(stops).map_or(window, |i| &window[..i])
+}
+
+/// Byte range of the clause around `start..end`, looking at most `NEGATION_WINDOW_CHARS`
+/// characters each way.
+fn clause_bounds(text: &str, start: usize, end: usize) -> (usize, usize) {
+    let head = &text[..start];
+    let from = head
+        .char_indices()
+        .rev()
+        .nth(NEGATION_WINDOW_CHARS - 1)
+        .map_or(0, |(i, _)| i);
+    let from = head[from..]
+        .rfind(CLAUSE_END)
+        .map_or(from, |i| from + i + 1);
+    (from, end + text_after(text, end, &CLAUSE_END).len())
+}
+
+/// Whether a first-person promise is left to the user (`If you want, I'll ...`, `Once you
+/// approve, we will ...`, `I'll push it when you're ready`): an offer, not deferred work. The
+/// condition must be in the promise's own clause and not past a neighbouring promise, so an offer
+/// cannot excuse a second promise (`If you want, I'll update the changelog, and I'll test it later`).
+fn is_offer(text: &str, promises: &[regex::Match], k: usize) -> bool {
+    let m = &promises[k];
+    let (from, to) = clause_bounds(text, m.start(), m.end());
+    let from = k
+        .checked_sub(1)
+        .map_or(from, |p| from.max(promises[p].end()));
+    let to = promises.get(k + 1).map_or(to, |next| to.min(next.start()));
+    rules().user_gate.is_match(&text[from..to])
+}
+
+/// Whether an unfinished-work match flags open work, rather than naming a UI element or a
+/// feature, or quoting the word.
+fn flags_open_work(text: &str, m: &regex::Match) -> bool {
+    if negated(text, m.start(), UNFINISHED_NEGATORS) {
+        return false;
+    }
+    let term = m.as_str();
+    if term.starts_with(['<', '[']) {
+        return true;
+    }
+    if text[..m.start()].ends_with(QUOTES) {
+        return false;
+    }
+    let next = next_word(text, m.end());
+    let next_in = |list: &[&str]| next.is_some_and(|w| list.contains(&w));
+    match term {
+        "placeholder" => {
+            !(next_in(PLACEHOLDER_UI_TERMS)
+                || previous_word(text, m.start())
+                    .is_some_and(|w| PLACEHOLDER_UI_OWNERS.contains(&w)))
+        }
+        "coming soon" => !next_in(COMING_SOON_UI_TERMS),
+        // todo, tbd, fixme
+        _ => {
+            !next_in(MARKER_NOUNS)
+                || rules()
+                    .still_open
+                    .is_match(text_after(text, m.end(), &CLAUSE_END))
+        }
+    }
 }
 
 /// Deterministic verdict: `true` means block.
@@ -173,20 +333,15 @@ pub fn rules_verdict(message: &str) -> bool {
     if !claims_completion {
         return false;
     }
-    let unfinished = rules.unfinished.find_iter(&text).any(|m| {
-        if negated(&text, m.start(), UNFINISHED_NEGATORS) {
-            return false;
-        }
-        if m.as_str() == "placeholder" {
-            if let Some(next) = next_word(&text, m.end()) {
-                if PLACEHOLDER_UI_TERMS.contains(&next) {
-                    return false;
-                }
-            }
-        }
-        true
-    });
-    unfinished || rules.promise.is_match(&text)
+    let unfinished = rules
+        .unfinished
+        .find_iter(&text)
+        .any(|m| flags_open_work(&text, &m));
+    if unfinished {
+        return true;
+    }
+    let promises: Vec<regex::Match> = rules.promise.find_iter(&text).collect();
+    (0..promises.len()).any(|k| !is_offer(&text, &promises, k))
 }
 
 /// Parse the hook payload. Hosts can emit lone surrogate escapes (a truncated emoji), numbers
@@ -603,10 +758,19 @@ mod tests {
 
     #[test]
     fn long_unpunctuated_text_stays_fast() {
-        let text = "not done ".repeat(50_000);
-        let started = std::time::Instant::now();
-        let _ = rules_verdict(&text);
-        assert!(started.elapsed().as_secs() < 2);
+        for text in [
+            "not done ".repeat(50_000),
+            // Every promise looks for a user condition in its clause, and every noun-headed
+            // marker looks for an "is still open" word after it; both stay bounded.
+            format!("done {}", "if you want i'll test ".repeat(10_000)),
+            format!("done {}", "the todo list widget ".repeat(10_000)),
+            format!("done {}", "search placeholder ".repeat(10_000)),
+            format!("done todo{}list", " ".repeat(200_000)),
+        ] {
+            let started = std::time::Instant::now();
+            let _ = rules_verdict(&text);
+            assert!(started.elapsed().as_secs() < 2);
+        }
     }
 
     #[test]

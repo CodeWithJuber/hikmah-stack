@@ -7,7 +7,12 @@ without the `hikmah` binary. Both implementations are tested against `truth_gate
 
 The gate does NOT fact-check. It blocks only when an un-negated completion claim co-occurs with
 an un-negated unfinished marker or a first-person future-work promise. Whole words only, negation
-just before a word cancels it, and fenced or inline code is ignored. Text is normalized the same
+just before a word cancels it, and fenced or inline code is ignored. A word that names a thing is
+not a marker ("the TODO list widget", "a Coming soon badge", "the search input placeholder", a
+quoted "TODO"), unless the clause says a task marker is still open ("one TODO comment is left").
+A promise whose clause leaves it to the user ("If you want, I'll ...", "Once you approve, we
+will ...") is an offer, not deferred work. Engine mode exists only in Rust; this fallback is
+rules only. Text is normalized the same
 way as in Rust (NFC, curly apostrophes, zero-width characters removed, whitespace other than
 newline mapped to a space) and word boundaries are ASCII, so both implementations agree.
 Malformed payloads (lone surrogate escapes, trailing data, out-of-range numbers) go through the
@@ -39,12 +44,44 @@ PROMISE = re.compile(
     r"share|push|deploy|follow up)\b",
     re.ASCII,
 )
+# A condition that leaves the promised step to the user: "If you want, I'll ...".
+USER_GATE = re.compile(
+    r"\b(?:(?:if|once|when|whenever|after|as soon as|should|unless) +you|let me know|would you like)\b",
+    re.ASCII,
+)
+# A word saying a task marker is still open: "a TODO comment is left".
+STILL_OPEN = re.compile(
+    r"\b(?:remain|remains|remaining|left|outstanding|pending|unresolved)\b", re.ASCII
+)
 COMPLETION_NEGATORS = {
     "not", "never", "no", "isn't", "aren't", "wasn't", "weren't", "haven't", "hasn't", "hadn't",
     "won't", "cannot", "can't", "nearly", "almost", "partially", "partly", "yet",
 }
 UNFINISHED_NEGATORS = {"no", "without", "zero", "removed", "remove", "replaced", "resolved", "cleared"}
-PLACEHOLDER_UI_TERMS = {"text", "attribute", "prop", "image", "color", "value"}
+# Words after "placeholder" that make it a UI property: "placeholder text".
+PLACEHOLDER_UI_TERMS = {"text", "attribute", "prop", "image", "color", "value", "copy"}
+# Words before "placeholder" that make it a UI property: "the search input placeholder".
+PLACEHOLDER_UI_OWNERS = {
+    "input", "inputs", "search", "field", "fields", "textarea", "form", "attribute", "select",
+}
+# Words after "coming soon" that make it UI copy: "a Coming soon badge".
+COMING_SOON_UI_TERMS = {
+    "badge", "badges", "banner", "label", "labels", "page", "pages", "state", "pill", "tag",
+    "text", "copy", "message", "screen", "section", "card", "notice", "ribbon", "chip",
+}
+# Words after todo/tbd/fixme that make it the name of a thing, not a marker ("the TODO list
+# widget"). A marker still counts when the same clause says it is open.
+MARKER_NOUNS = {
+    "list", "lists", "app", "apps", "widget", "widgets", "item", "items", "comment", "comments",
+    "component", "components", "feature", "page", "view", "board", "tracker", "example", "entry",
+    "entries",
+}
+# Characters between a term and the word it modifies: "TODO list", "TODO-list", '"Coming soon" badge'.
+WORD_GAP = " -\"'“”"
+# A term right after an opening quote is mentioned, not used.
+QUOTES = "\"'“”"
+CLAUSE_END = ".!?\n;"
+ASCII_ALNUM = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 WORD_SPLIT = re.compile(r"[ \n,;:()]+")
 # Payload fallback, mirrored from `parse_payload` in hook.rs.
 SURROGATE_ESCAPE = re.compile(
@@ -87,21 +124,85 @@ def negated(text, start, negators):
 
 
 def next_word(text, end):
-    match = re.search(r"[A-Za-z0-9]+", text[end:])
-    return match.group(0) if match else None
+    """The word right after `end`, across spaces, hyphens and quotes only."""
+    i = end
+    while i < len(text) and text[i] in WORD_GAP:
+        i += 1
+    j = i
+    while j < len(text) and text[j] in ASCII_ALNUM:
+        j += 1
+    return text[i:j] or None
+
+
+def previous_word(text, start):
+    """The word right before `start`, across spaces, hyphens and quotes only."""
+    j = start
+    while j > 0 and text[j - 1] in WORD_GAP:
+        j -= 1
+    i = j
+    while i > 0 and text[i - 1] in ASCII_ALNUM:
+        i -= 1
+    return text[i:j] or None
+
+
+def text_after(text, end, stops):
+    """Up to NEGATION_WINDOW_CHARS characters after `end`, cut at the first of `stops`."""
+    window = text[end:end + NEGATION_WINDOW_CHARS]
+    cuts = [i for i in (window.find(ch) for ch in stops) if i >= 0]
+    return window[:min(cuts)] if cuts else window
+
+
+def clause_bounds(text, start, end):
+    """Index range of the clause around start..end, at most NEGATION_WINDOW_CHARS each way."""
+    lo = max(0, start - NEGATION_WINDOW_CHARS)
+    cut = max(text.rfind(ch, lo, start) for ch in CLAUSE_END)
+    if cut >= 0:
+        lo = cut + 1
+    return lo, end + len(text_after(text, end, CLAUSE_END))
+
+
+def is_offer(text, promises, k):
+    """Whether a promise is left to the user ("If you want, I'll ..."). The condition must be in
+    the promise's own clause and not past a neighbouring promise."""
+    m = promises[k]
+    lo, hi = clause_bounds(text, m.start(), m.end())
+    if k > 0:
+        lo = max(lo, promises[k - 1].end())
+    if k + 1 < len(promises):
+        hi = min(hi, promises[k + 1].start())
+    return USER_GATE.search(text[lo:hi]) is not None
+
+
+def flags_open_work(text, m):
+    """Whether an unfinished-work match flags open work, rather than naming a UI element or a
+    feature, or quoting the word."""
+    if negated(text, m.start(), UNFINISHED_NEGATORS):
+        return False
+    term = m.group(0)
+    if term.startswith(("<", "[")):
+        return True
+    if m.start() > 0 and text[m.start() - 1] in QUOTES:
+        return False
+    following = next_word(text, m.end())
+    if term == "placeholder":
+        return not (following in PLACEHOLDER_UI_TERMS
+                    or previous_word(text, m.start()) in PLACEHOLDER_UI_OWNERS)
+    if term == "coming soon":
+        return following not in COMING_SOON_UI_TERMS
+    # todo, tbd, fixme
+    return (following not in MARKER_NOUNS
+            or STILL_OPEN.search(text_after(text, m.end(), CLAUSE_END)) is not None)
 
 
 def rules_verdict(message):
     text = normalize(message)
     if not any(not negated(text, m.start(), COMPLETION_NEGATORS) for m in COMPLETION.finditer(text)):
         return False
-    for m in UNFINISHED.finditer(text):
-        if negated(text, m.start(), UNFINISHED_NEGATORS):
-            continue
-        if m.group(0) == "placeholder" and next_word(text, m.end()) in PLACEHOLDER_UI_TERMS:
-            continue
+    if any(flags_open_work(text, m) for m in UNFINISHED.finditer(text)):
         return True
-    return PROMISE.search(text) is not None
+    # A promise the user has to trigger ("If you want, I'll ...") is an offer, not deferred work.
+    promises = list(PROMISE.finditer(text))
+    return any(not is_offer(text, promises, k) for k in range(len(promises)))
 
 
 def truthy(value):
