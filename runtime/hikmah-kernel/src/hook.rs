@@ -11,14 +11,24 @@
 //!   implementations agree on unusual Unicode;
 //! - block only when an un-negated completion claim co-occurs with an un-negated unfinished
 //!   marker or a first-person future-work promise;
-//! - a word that names a thing is not a marker: `todo`, `tbd` or `fixme` followed by a noun such
-//!   as `list`, `app` or `comment` (`the TODO list widget`) unless the same clause says it is
-//!   still open (`one TODO comment is left`); `coming soon` followed by UI words such as `badge`
-//!   or `page`; `placeholder` after `input`, `search` or `field`, or before `text`; and any of
-//!   these right after an opening quote (`the badge reads "Coming soon"`);
-//! - a promise whose clause leaves it to the user is an offer, not deferred work
-//!   (`If you want, I'll ...`, `Once you approve, we will ...`, `let me know`); the condition
-//!   cannot reach past a neighbouring promise.
+//! - a word that names a thing is not a marker: `todo`, `tbd` or `fixme` followed by a feature
+//!   noun such as `list` or `app` (`the TODO list widget`), `coming soon` followed by a UI word
+//!   such as `badge` or `page`, and `placeholder` after `input`, `search` or `field`. Each still
+//!   counts when the rest of its clause says it is open (`remains`, `left`, `pending`, `still
+//!   needs`). `todo`, `tbd` or `fixme` followed by `comment` or `item` names a thing only when
+//!   the rest of its clause says it was dealt with (`the TODO comment in proxy.ts is now
+//!   handled`) and nothing in the clause says it is open, because `I left a TODO comment` is open
+//!   work. `placeholder` before `text` (the older rule) is always UI. A term right after an
+//!   opening quote is mentioned (`the badge reads "Coming soon"`), except marker syntax (`"TODO:
+//!   retries"`, `FIXME(`), which always counts;
+//! - a clause ends at `.`, `!`, `?`, `;` or a newline, but not at a `.` directly followed by a
+//!   letter or digit (`proxy.ts`, `v2.1`);
+//! - a promise left to the user is an offer, not deferred work: an idiom asking for the user's
+//!   permission or trigger (`if you want`, `once you approve`, `when you're ready`, `let me know
+//!   if you'd like`, `would you like`) in the promise's own comma-delimited segment or opening
+//!   the segment before it (`If you want, I'll ...`). A condition about product behaviour (`when
+//!   you visit /old`, `if you add two plans`) is not one, and a condition cannot reach across a
+//!   coordinated clause (`..., and I'll ...`), past a neighbouring promise, or past a clause end.
 //!
 //! Optional engine mode: a typed decision engine (for example Jev) estimates the probability that
 //! the completion claim would fail verification (a test run of the requested change). The gate
@@ -65,16 +75,28 @@ const NEGATION_WINDOW_CHARS: usize = 200;
 
 const BLOCK_REASON: &str = "Hikmah Truth Gate: the response claims completion while still containing unfinished work or a future-work promise. Resolve it or state the limitation explicitly.";
 
+/// Idioms that leave a promised step to the user's permission or trigger: `if you want`,
+/// `once you approve`, `when you're ready`, `let me know if you'd like`, `would you like`.
+/// A condition about how the product behaves (`when you visit /old`, `if you add two plans`) or
+/// about anything else (`if you don't mind waiting`, `let me know if anything breaks`) is not one.
+/// `after you merge` is not one: work promised for after the merge is deferred work.
+const USER_GATE: &str = r"(?:if|once|when|whenever|after|as soon as) +you(?:'d| +would)? +(?:want|wish|like|prefer|approve|confirm|agree|say so)|(?:once|when|after|as soon as) +you +review|(?:if|once|when|whenever) +you(?:'re| +are) +(?:ready|happy|ok|okay)|should +you +(?:want|wish|prefer)|would +you +like|let +me +know(?: +if +you(?:'d| +would)? +(?:want|like|prefer)| +and)";
+
 struct Rules {
     fence: Regex,
     inline_code: Regex,
     completion: Regex,
     unfinished: Regex,
     promise: Regex,
-    /// A condition that leaves the promised step to the user: `If you want, I'll ...`.
+    /// A user condition anywhere in a promise's own segment: `I'll push it once you approve`.
     user_gate: Regex,
-    /// A word saying a task marker is still open: `a TODO comment is left`.
+    /// A user condition that opens the segment before a promise: `If you want, I'll ...`.
+    fronted_gate: Regex,
+    /// A word saying a named thing is still open: `a TODO comment is left`, `the search
+    /// placeholder still needs real copy`, `the TODO list still has 3 open entries`.
     still_open: Regex,
+    /// A statement that a named marker was dealt with: `the TODO comment ... is now handled`.
+    resolution: Regex,
 }
 
 fn rules() -> &'static Rules {
@@ -94,14 +116,18 @@ fn rules() -> &'static Rules {
             r"(?-u:\b)(i|we)(?:'ll| +will| +shall) +(?:(?:also|then|still|now|soon|later|next) +)?(finish|complete|upload|create|test|verify|send|provide|add|write|fix|update|run|check|share|push|deploy|follow up)(?-u:\b)",
         )
         .expect("promise regex"),
-        user_gate: Regex::new(
-            r"(?-u:\b)(?:(?:if|once|when|whenever|after|as soon as|should|unless) +you|let me know|would you like)(?-u:\b)",
-        )
-        .expect("user gate regex"),
+        user_gate: Regex::new(&format!(r"(?-u:\b)(?:{USER_GATE})(?-u:\b)"))
+            .expect("user gate regex"),
+        fronted_gate: Regex::new(&format!(r"^ *(?:(?:and|but|so) +)?(?:{USER_GATE})(?-u:\b)"))
+            .expect("fronted gate regex"),
         still_open: Regex::new(
-            r"(?-u:\b)(?:remain|remains|remaining|left|outstanding|pending|unresolved)(?-u:\b)",
+            r"(?-u:\b)(?:remain|remains|remaining|left|outstanding|pending|unresolved|still +(?:needs?|lacks?|requires?)|still +(?:has|have) +(?:[0-9]+|some|several|a few|two|three|many) +open)(?-u:\b)",
         )
         .expect("still open regex"),
+        resolution: Regex::new(
+            r"(?-u:\b)(?:is|are|was|were|been|got)(?: +(?:now|all|also|already))? +(?:handled|resolved|removed|addressed|fixed|done|implemented|cleared|closed|gone|deleted)(?-u:\b)",
+        )
+        .expect("resolution regex"),
     })
 }
 
@@ -155,20 +181,16 @@ const COMING_SOON_UI_TERMS: &[&str] = &[
     "badge", "badges", "banner", "label", "labels", "page", "pages", "state", "pill", "tag",
     "text", "copy", "message", "screen", "section", "card", "notice", "ribbon", "chip",
 ];
-/// Words after `todo`, `tbd` or `fixme` that make it the name of a thing, not a marker:
-/// `the TODO list widget`, `the todo app`. A marker still counts when the same clause says it is
-/// open (`one TODO comment is left`).
-const MARKER_NOUNS: &[&str] = &[
+/// Words after `todo`, `tbd` or `fixme` that make it the name of a feature, not a marker:
+/// `the TODO list widget`, `the todo app`. It still counts when the rest of its clause says it is
+/// open (`the TODO list page is still pending`).
+const NAME_NOUNS: &[&str] = &[
     "list",
     "lists",
     "app",
     "apps",
     "widget",
     "widgets",
-    "item",
-    "items",
-    "comment",
-    "comments",
     "component",
     "components",
     "feature",
@@ -177,9 +199,11 @@ const MARKER_NOUNS: &[&str] = &[
     "board",
     "tracker",
     "example",
-    "entry",
-    "entries",
 ];
+/// Words after `todo`, `tbd` or `fixme` that usually name an open marker in code
+/// (`I left a TODO comment`, `two TODO items: ...`). They name a thing only when the rest of the
+/// clause says it was dealt with (`the TODO comment in proxy.ts is now handled`).
+const MARKER_NOUNS: &[&str] = &["comment", "comments", "item", "items", "entry", "entries"];
 /// Characters between a term and the word it modifies: `TODO list`, `TODO-list`, `"Coming soon" badge`.
 const WORD_GAP: &[char] = &[' ', '-', '"', '\'', '\u{201c}', '\u{201d}'];
 /// A term right after an opening quote is mentioned, not used: `the "Coming soon" badge`.
@@ -243,6 +267,14 @@ fn next_word(text: &str, end: usize) -> Option<&str> {
     (len > 0).then(|| &rest[..len])
 }
 
+/// The first ASCII word after `end`, across any punctuation (`placeholder: text`,
+/// `placeholder (text)`). This is how the `placeholder text` check has always read the next word.
+fn loose_next_word(text: &str, end: usize) -> Option<&str> {
+    text[end..]
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .find(|w| !w.is_empty())
+}
+
 /// The word right before `start`, across spaces, hyphens, and quotes only.
 fn previous_word(text: &str, start: usize) -> Option<&str> {
     let head = text[..start].trim_end_matches(WORD_GAP);
@@ -253,14 +285,27 @@ fn previous_word(text: &str, start: usize) -> Option<&str> {
     (from < head.len()).then(|| &head[from..])
 }
 
-/// Up to `NEGATION_WINDOW_CHARS` characters after `end`, cut at the first of `stops`.
-fn text_after<'a>(text: &'a str, end: usize, stops: &[char]) -> &'a str {
+/// Whether the character `c` at byte `i` ends a clause. A `.` directly followed by a letter or
+/// digit does not: it sits inside a file name or a version (`proxy.ts`, `page.tsx`, `v2.1`).
+fn ends_clause(text: &str, i: usize, c: char) -> bool {
+    match c {
+        '.' => !text[i + 1..].starts_with(|n: char| n.is_ascii_alphanumeric()),
+        c => CLAUSE_END.contains(&c),
+    }
+}
+
+/// Up to `NEGATION_WINDOW_CHARS` characters after `end`, cut at the first clause end.
+fn clause_tail(text: &str, end: usize) -> &str {
     let tail = &text[end..];
     let window = tail
         .char_indices()
         .nth(NEGATION_WINDOW_CHARS)
         .map_or(tail, |(i, _)| &tail[..i]);
-    window.find(stops).map_or(window, |i| &window[..i])
+    let cut = window
+        .char_indices()
+        .find(|&(i, c)| ends_clause(text, end + i, c))
+        .map_or(window.len(), |(i, _)| i);
+    &window[..cut]
 }
 
 /// Byte range of the clause around `start..end`, looking at most `NEGATION_WINDOW_CHARS`
@@ -272,16 +317,23 @@ fn clause_bounds(text: &str, start: usize, end: usize) -> (usize, usize) {
         .rev()
         .nth(NEGATION_WINDOW_CHARS - 1)
         .map_or(0, |(i, _)| i);
+    // Every clause end is ASCII, so the clause starts one byte after it.
     let from = head[from..]
-        .rfind(CLAUSE_END)
-        .map_or(from, |i| from + i + 1);
-    (from, end + text_after(text, end, &CLAUSE_END).len())
+        .char_indices()
+        .rev()
+        .find(|&(i, c)| ends_clause(text, from + i, c))
+        .map_or(from, |(i, _)| from + i + 1);
+    (from, end + clause_tail(text, end).len())
 }
 
-/// Whether a first-person promise is left to the user (`If you want, I'll ...`, `Once you
-/// approve, we will ...`, `I'll push it when you're ready`): an offer, not deferred work. The
-/// condition must be in the promise's own clause and not past a neighbouring promise, so an offer
-/// cannot excuse a second promise (`If you want, I'll update the changelog, and I'll test it later`).
+/// Whether a first-person promise is left to the user: an offer, not deferred work. The condition
+/// is an idiom asking for the user's permission or trigger ([`USER_GATE`]) and must sit either in
+/// the promise's own comma-delimited segment (`I'll push it once you approve`, `Let me know and
+/// I'll ...`) or open the segment just before it (`If you want, I'll ...`, `When you're ready,
+/// I'll ...`). A fronted condition does not reach across a coordinated clause (`..., and I'll`),
+/// except after `Let me know if you'd like,`. Nothing reaches past a neighbouring promise or a
+/// clause end, so an offer cannot excuse a second promise (`If you want, I'll update the
+/// changelog, and I'll test it later`).
 fn is_offer(text: &str, promises: &[regex::Match], k: usize) -> bool {
     let m = &promises[k];
     let (from, to) = clause_bounds(text, m.start(), m.end());
@@ -289,7 +341,39 @@ fn is_offer(text: &str, promises: &[regex::Match], k: usize) -> bool {
         .checked_sub(1)
         .map_or(from, |p| from.max(promises[p].end()));
     let to = promises.get(k + 1).map_or(to, |next| to.min(next.start()));
-    rules().user_gate.is_match(&text[from..to])
+    let rules = rules();
+    let seg_from = text[from..m.start()]
+        .rfind(',')
+        .map_or(from, |i| from + i + 1);
+    let seg_to = text[m.end()..to].find(',').map_or(to, |i| m.end() + i);
+    if rules.user_gate.is_match(&text[seg_from..seg_to]) {
+        return true;
+    }
+    if seg_from == from {
+        return false;
+    }
+    // `seg_from - 1` is the comma that opens the promise's segment.
+    let before = &text[from..seg_from - 1];
+    let previous = before.rfind(',').map_or(before, |i| &before[i + 1..]);
+    if !rules.fronted_gate.is_match(previous) {
+        return false;
+    }
+    let own = text[seg_from..m.start()].trim_start_matches(' ');
+    let coordinated = own.starts_with("and ") || own.starts_with("but ");
+    !coordinated || previous.trim_start_matches(' ').starts_with("let me know")
+}
+
+/// Whether the rest of a marker's clause says it was dealt with (`the TODO comment in proxy.ts
+/// is now handled`). Only the stretch up to the next comma, `and` or `but` counts, so a
+/// resolution of something else (`I added TODO comments, and the header is fixed`) does not.
+fn resolved_after(text: &str, end: usize) -> bool {
+    let tail = clause_tail(text, end);
+    let cut = [",", " and ", " but "]
+        .iter()
+        .filter_map(|stop| tail.find(stop))
+        .min()
+        .unwrap_or(tail.len());
+    rules().resolution.is_match(&tail[..cut])
 }
 
 /// Whether an unfinished-work match flags open work, rather than naming a UI element or a
@@ -302,24 +386,38 @@ fn flags_open_work(text: &str, m: &regex::Match) -> bool {
     if term.starts_with(['<', '[']) {
         return true;
     }
-    if text[..m.start()].ends_with(QUOTES) {
+    // Marker syntax (`TODO:`, `FIXME(`) is a marker even inside quotes: `left a "TODO: retries"`.
+    let marker_syntax =
+        matches!(term, "todo" | "tbd" | "fixme") && text[m.end()..].starts_with([':', '(']);
+    if text[..m.start()].ends_with(QUOTES) && !marker_syntax {
         return false;
     }
     let next = next_word(text, m.end());
     let next_in = |list: &[&str]| next.is_some_and(|w| list.contains(&w));
+    let rules = rules();
+    // A named thing still counts when the rest of its clause says it is open
+    // (`the search placeholder still needs real copy`).
+    let open_after = || rules.still_open.is_match(clause_tail(text, m.end()));
     match term {
         "placeholder" => {
-            !(next_in(PLACEHOLDER_UI_TERMS)
-                || previous_word(text, m.start())
-                    .is_some_and(|w| PLACEHOLDER_UI_OWNERS.contains(&w)))
+            let ui_text =
+                loose_next_word(text, m.end()).is_some_and(|w| PLACEHOLDER_UI_TERMS.contains(&w));
+            let owned =
+                previous_word(text, m.start()).is_some_and(|w| PLACEHOLDER_UI_OWNERS.contains(&w));
+            !(ui_text || (owned && !open_after()))
         }
-        "coming soon" => !next_in(COMING_SOON_UI_TERMS),
+        "coming soon" => !next_in(COMING_SOON_UI_TERMS) || open_after(),
         // todo, tbd, fixme
         _ => {
-            !next_in(MARKER_NOUNS)
-                || rules()
-                    .still_open
-                    .is_match(text_after(text, m.end(), &CLAUSE_END))
+            if next_in(NAME_NOUNS) {
+                open_after()
+            } else if next_in(MARKER_NOUNS) {
+                // `I left a TODO comment` is open work even though `left` comes first.
+                let (from, to) = clause_bounds(text, m.start(), m.end());
+                !resolved_after(text, m.end()) || rules.still_open.is_match(&text[from..to])
+            } else {
+                true
+            }
         }
     }
 }
@@ -855,6 +953,13 @@ mod tests {
             format!("done {}", "the todo list widget ".repeat(10_000)),
             format!("done {}", "search placeholder ".repeat(10_000)),
             format!("done todo{}list", " ".repeat(200_000)),
+            // Comma segments, fronted conditions, resolution checks, and dots inside file names.
+            format!("done {}", "if you want, and i'll test, ".repeat(10_000)),
+            format!(
+                "done {}",
+                "the todo comment in a.ts is now handled, ".repeat(10_000)
+            ),
+            format!("done todo comment{}", ".x".repeat(100_000)),
         ] {
             let started = std::time::Instant::now();
             let _ = rules_verdict(&text);

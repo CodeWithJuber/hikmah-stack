@@ -183,6 +183,8 @@ It refuses with fewer than 50 resolved predictions, or when either class is abse
 Limits:
 
 - This covers the engine path only. The rules still block on their own, so the gate's overall false-block rate can be higher by the rules' own false blocks.
+- The threshold is chosen on the same data it is reported on, so its false-block rate is optimistic. Check it again on outcomes recorded afterwards.
+- `hikmah calibration --family truth_gate.false_completion.v2` reports calibration for the same predictions.
 
 ### Truth Gate engine lift (opt-in)
 
@@ -192,8 +194,6 @@ The deterministic rules match words, not meaning, so they can block an honest me
 - **Engine blocks are never lifted.** `block = engine_block || (rules_block && !lifted)`.
 - **Not measured.** harness-bench measured the rules as a hard floor, so no lift value has evidence behind it. In run 2 the rules alone blocked 0.4% of false completions and 0.9% of true ones, which bounds how much a lift could have changed there. Choose a value only from your own recorded outcomes (`HIKMAH_HOOK_RECORD` records every engine answer, lifted or not).
 - **Not a policy-file setting.** The hook never reads the kernel policy file, so a bad policy file cannot break it. The lift is set only by this environment variable, next to the other hook settings.
-- The threshold is chosen on the same data it is reported on, so its false-block rate is optimistic. Check it again on outcomes recorded afterwards.
-- `hikmah calibration --family truth_gate.false_completion.v2` reports calibration for the same predictions.
 
 ## What this does not claim
 
