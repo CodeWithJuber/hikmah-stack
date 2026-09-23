@@ -103,8 +103,9 @@ pub fn wilson_interval(k: usize, n: usize, z: f64) -> [f64; 2] {
 }
 
 impl MemoryStore {
-    /// Pair recorded Truth Gate predictions with their outcomes and choose the engine threshold.
-    /// Refuses with fewer than [`MIN_OUTCOMES`] resolved predictions, or without both classes.
+    /// Pair recorded Truth Gate engine predictions (`model:` sources only) with their outcomes and
+    /// choose the engine threshold. Refuses with fewer than [`MIN_OUTCOMES`] resolved
+    /// predictions, or without both classes.
     pub fn gate_threshold(&self, max_false_block: f64) -> Result<GateThresholdReport> {
         if !(0.0..=1.0).contains(&max_false_block) {
             return Err(KernelError::Invalid(
@@ -115,8 +116,9 @@ impl MemoryStore {
         let mut points = Vec::new();
         let mut engines = BTreeSet::new();
         for entry in self.all() {
-            // A purged or superseded prediction must not steer the threshold.
-            if entry.status != TraceStatus::Active {
+            // A purged or superseded prediction must not steer the threshold, and neither may a
+            // person's or agent's forecast: this threshold applies to the engine's probability.
+            if entry.status != TraceStatus::Active || !entry.trace.is_model_authored() {
                 continue;
             }
             let Some(prediction) = &entry.trace.prediction else {

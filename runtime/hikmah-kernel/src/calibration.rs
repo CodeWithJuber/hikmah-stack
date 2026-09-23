@@ -2,11 +2,17 @@
 //!
 //! Pairs every recorded `Prediction` trace with the latest *active* `Outcome` trace that resolves
 //! it (written by a non-model principal; purged or superseded outcomes do not count) and reports,
-//! per engine and question family: Brier score, expected calibration error over 5 equal-width
-//! bins, accuracy or base rate, and how many predictions carried no probability at all.
+//! per forecaster (an engine such as `jev@jev-1.13.0`, or a person or agent such as
+//! `human:alex`) and question family: Brier score, expected calibration error over 5
+//! equal-width bins, accuracy or base rate, and how many predictions carried no probability at
+//! all. Rows are ordered by family, then answer kind, then forecaster, so every forecaster's row
+//! for one family sits next to the others.
 //!
-//! A family is `measurable` once it has at least [`MIN_OUTCOMES`] scored predictions. Sample size
-//! is necessary, not sufficient: it is reported `calibrated` only when, in addition,
+//! A family is `measurable` once it has at least `calibration_min_outcomes` scored predictions
+//! (a [`crate::policy::KernelPolicy`] field, default [`MIN_OUTCOMES`]). Below that its scores are
+//! still reported, labelled `evidence: "anecdotal"` next to their `n`: they describe the
+//! outcomes so far but support no verdict. Sample size is necessary, not sufficient: a family is
+//! reported `calibrated` only when, in addition,
 //!
 //! 1. Spiegelhalter's Z test does not reject calibration at alpha = 0.05:
 //!    `Z = Σ (y − p)(1 − 2p) / sqrt(Σ (1 − 2p)² p (1 − p))`, `|Z| < 1.96`
@@ -19,11 +25,17 @@
 //! reported]`, with the binary Brier of that pair against the top-label accuracy base rate. When
 //! Z or the skill is undefined (zero variance, for example every `p` in {0, 0.5, 1}, or a base rate
 //! of 0 or 1) the family is not reported calibrated.
+//!
+//! With [`FamilyFilter::Prefix`], the report also has one pooled row per forecaster over every
+//! matching family, in the top-label view (for a noul forecast, the probability of the side it
+//! leaned to). Pooling trades family-level detail for sample size.
 use crate::ledger::MemoryStore;
 use crate::trace::{PredictionRecord, TraceKind, TraceStatus};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+/// Default of `KernelPolicy::calibration_min_outcomes`, and the minimum number of resolved
+/// predictions `hikmah gate-threshold` needs.
 pub const MIN_OUTCOMES: usize = 50;
 const BINS: usize = 5;
 /// Two-sided critical value of the standard normal at alpha = 0.05.
@@ -37,18 +49,53 @@ pub struct CalibrationBin {
     pub observed_rate: f64,
 }
 
+/// Which families a calibration report covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FamilyFilter<'a> {
+    All,
+    Exact(&'a str),
+    /// Every family that starts with the prefix, plus one pooled row per forecaster.
+    Prefix(&'a str),
+}
+
+impl FamilyFilter<'_> {
+    fn matches(&self, family: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Exact(name) => family == *name,
+            Self::Prefix(prefix) => family.starts_with(prefix),
+        }
+    }
+}
+
+/// Answer kind of a pooled row: every prediction is scored on its top label.
+pub const POOLED_KIND: &str = "top_label";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FamilyCalibration {
+    /// Who forecast: an engine (`jev@jev-1.13.0`) or a person or agent (`human:alex`).
     pub engine: String,
+    /// The family, or `<prefix>*` for a pooled row.
     pub family: String,
+    /// `noul`, `choice`, `score`, or [`POOLED_KIND`] for a pooled row.
     pub answer_kind: String,
+    /// Families in a pooled row (empty otherwise).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pooled_families: Vec<String>,
     /// Resolved predictions that carried a probability.
     pub n: usize,
     /// Resolved predictions without any reported probability (excluded from the metrics).
     pub unscored: usize,
-    /// Noul: mean (p - y)². Choice/score: multiclass Brier over the reported distribution.
+    /// `anecdotal` while `n` is below `min_outcomes`: the scores are shown, but they support no
+    /// verdict either way. `measurable` from `min_outcomes` on.
+    pub evidence: &'static str,
+    /// Noul and pooled rows: mean (p - y)². Choice/score: multiclass Brier over the reported
+    /// distribution (a forecast with only a top-label probability adds its binary Brier).
     pub brier: f64,
-    /// Brier of always predicting the observed base rate (noul only; lower is better).
+    /// Binary Brier of the probability the verdict tests (noul: P(true); others: P(reported
+    /// answer)). The same as `brier` for noul; comparable across forecasters and answer kinds.
+    pub top_label_brier: f64,
+    /// Brier of always predicting the observed base rate (noul and pooled rows; lower is better).
     pub baseline_brier: Option<f64>,
     /// Expected calibration error of the reported probability (noul: P(true); others: P(top)).
     pub ece: f64,
@@ -62,7 +109,7 @@ pub struct FamilyCalibration {
     /// `1 − Brier / Brier(base rate)` (choice/score: top-label binary Brier). Positive means the
     /// probabilities beat always predicting the base rate. `None` when the base rate is 0 or 1.
     pub brier_skill: Option<f64>,
-    /// At least [`MIN_OUTCOMES`] scored predictions: enough data to judge calibration.
+    /// At least `min_outcomes` scored predictions: enough data to judge calibration.
     pub measurable: bool,
     /// Measurable, `|z| < 1.96`, and `brier_skill > 0`.
     pub calibrated: bool,
@@ -71,9 +118,15 @@ pub struct FamilyCalibration {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CalibrationReport {
+    /// `calibration_min_outcomes` of the policy in effect.
     pub min_outcomes: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family_prefix: Option<String>,
     pub unresolved_predictions: usize,
     pub families: Vec<FamilyCalibration>,
+    /// One row per forecaster over every family matching `family_prefix`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pooled: Vec<FamilyCalibration>,
 }
 
 struct Pair<'a> {
@@ -107,9 +160,17 @@ impl MemoryStore {
         outcomes
     }
 
+    /// Calibration of every family, or of one family.
     pub fn calibration(&self, family: Option<&str>) -> CalibrationReport {
+        self.calibration_report(family.map_or(FamilyFilter::All, FamilyFilter::Exact))
+    }
+
+    /// Calibration of the families `filter` selects; a prefix filter adds pooled rows.
+    pub fn calibration_report(&self, filter: FamilyFilter) -> CalibrationReport {
+        let min_outcomes = self.policy().calibration_min_outcomes;
         let outcomes = self.latest_outcomes();
 
+        // (family, answer kind, forecaster): each forecaster's row for a family is adjacent.
         type Key = (String, String, String);
         let mut groups: BTreeMap<Key, (Vec<Pair>, usize)> = BTreeMap::new();
         let mut unresolved = 0;
@@ -118,7 +179,7 @@ impl MemoryStore {
             let Some(prediction) = &trace.prediction else {
                 continue;
             };
-            if family.is_some_and(|f| f != prediction.family) {
+            if !filter.matches(&prediction.family) {
                 continue;
             }
             let Some((_, observed)) = outcomes.get(trace.id.as_str()) else {
@@ -127,9 +188,9 @@ impl MemoryStore {
             };
             let group = groups
                 .entry((
-                    prediction.engine.clone(),
                     prediction.family.clone(),
                     prediction.answer_kind.clone(),
+                    prediction.engine.clone(),
                 ))
                 .or_default();
             match prediction.p {
@@ -142,18 +203,78 @@ impl MemoryStore {
             }
         }
 
+        let pooled = match filter {
+            FamilyFilter::Prefix(prefix) => {
+                let mut by_engine: BTreeMap<&str, (Vec<&Pair>, usize, Vec<String>)> =
+                    BTreeMap::new();
+                for ((family, _, engine), (pairs, unscored)) in &groups {
+                    let slot = by_engine.entry(engine.as_str()).or_default();
+                    slot.0.extend(pairs.iter());
+                    slot.1 += unscored;
+                    if !slot.2.contains(family) {
+                        slot.2.push(family.clone());
+                    }
+                }
+                by_engine
+                    .into_iter()
+                    .map(|(engine, (pairs, unscored, families))| {
+                        let points: Vec<(f64, f64)> = pairs.iter().map(|p| top_label(p)).collect();
+                        let brier = mean_squared_error(&points);
+                        let mut row = finish(
+                            engine.to_string(),
+                            format!("{prefix}*"),
+                            POOLED_KIND.to_string(),
+                            points,
+                            brier,
+                            true,
+                            unscored,
+                            min_outcomes,
+                        );
+                        row.pooled_families = families;
+                        row
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
         let families = groups
             .into_iter()
-            .map(|((engine, family, answer_kind), (pairs, unscored))| {
-                summarize(engine, family, answer_kind, &pairs, unscored)
+            .map(|((family, answer_kind, engine), (pairs, unscored))| {
+                summarize(engine, family, answer_kind, &pairs, unscored, min_outcomes)
             })
             .collect();
         CalibrationReport {
-            min_outcomes: MIN_OUTCOMES,
+            min_outcomes,
+            family_prefix: match filter {
+                FamilyFilter::Prefix(prefix) => Some(prefix.to_string()),
+                _ => None,
+            },
             unresolved_predictions: unresolved,
             families,
+            pooled,
         }
     }
+}
+
+/// The top-label pair of a prediction: the probability of the answer it leaned to, and whether
+/// that answer happened. For noul, the lean is `true` when `P(true) >= 0.5`.
+fn top_label(pair: &Pair) -> (f64, f64) {
+    let record = pair.prediction;
+    let (p, hit) = if record.answer_kind == "noul" {
+        let says_true = record.value.eq_ignore_ascii_case("true");
+        let happened = pair.observed.eq_ignore_ascii_case("true");
+        (
+            if says_true { pair.p } else { 1.0 - pair.p },
+            says_true == happened,
+        )
+    } else {
+        (pair.p, pair.observed == record.value)
+    };
+    (p, if hit { 1.0 } else { 0.0 })
+}
+
+fn mean_squared_error(points: &[(f64, f64)]) -> f64 {
+    points.iter().map(|(p, y)| (p - y).powi(2)).sum::<f64>() / points.len().max(1) as f64
 }
 
 fn summarize(
@@ -162,11 +283,10 @@ fn summarize(
     answer_kind: String,
     pairs: &[Pair],
     unscored: usize,
+    min_outcomes: usize,
 ) -> FamilyCalibration {
-    let n = pairs.len();
-    let denominator = n.max(1) as f64;
     let is_noul = answer_kind == "noul";
-    // (reported probability, outcome as 0/1) for the ECE / reliability view.
+    // (reported probability, outcome as 0/1) for the verdict and the reliability view.
     let points: Vec<(f64, f64)> = pairs
         .iter()
         .map(|pair| {
@@ -178,13 +298,10 @@ fn summarize(
             (pair.p, if y { 1.0 } else { 0.0 })
         })
         .collect();
-    let rate = points.iter().map(|(_, y)| y).sum::<f64>() / denominator;
-    let (brier, baseline_brier) = if is_noul {
-        let brier = points.iter().map(|(p, y)| (p - y).powi(2)).sum::<f64>() / denominator;
-        let base = points.iter().map(|(_, y)| (rate - y).powi(2)).sum::<f64>() / denominator;
-        (brier, Some(base))
+    let brier = if is_noul {
+        mean_squared_error(&points)
     } else {
-        let brier = pairs
+        pairs
             .iter()
             .map(|pair| {
                 let probabilities = &pair.prediction.probabilities;
@@ -203,26 +320,46 @@ fn summarize(
                 }
             })
             .sum::<f64>()
-            / denominator;
-        (brier, None)
+            / pairs.len().max(1) as f64
     };
+    finish(
+        engine,
+        family,
+        answer_kind,
+        points,
+        brier,
+        is_noul,
+        unscored,
+        min_outcomes,
+    )
+}
+
+/// Verdict, bins, and ECE over `(p, y)` points. `brier` is the row's reported Brier;
+/// `report_baseline` shows the base-rate Brier (rows whose `brier` is binary).
+#[allow(clippy::too_many_arguments)]
+fn finish(
+    engine: String,
+    family: String,
+    answer_kind: String,
+    points: Vec<(f64, f64)>,
+    brier: f64,
+    report_baseline: bool,
+    unscored: usize,
+    min_outcomes: usize,
+) -> FamilyCalibration {
+    let n = points.len();
+    let denominator = n.max(1) as f64;
+    let rate = points.iter().map(|(_, y)| y).sum::<f64>() / denominator;
+    let top_label_brier = mean_squared_error(&points);
+    let base = points.iter().map(|(_, y)| (rate - y).powi(2)).sum::<f64>() / denominator;
 
     let (z, p_value) = match spiegelhalter_z(&points) {
         Some(z) => (Some(z), Some(erfc(z.abs() / std::f64::consts::SQRT_2))),
         None => (None, None),
     };
-    // Noul: the family Brier and its base-rate Brier. Choice/score: the binary Brier of the
-    // top-label pair against the top-label accuracy base rate.
-    let (skill_brier, skill_reference) = match baseline_brier {
-        Some(base) => (brier, base),
-        None => (
-            points.iter().map(|(p, y)| (p - y).powi(2)).sum::<f64>() / denominator,
-            rate * (1.0 - rate),
-        ),
-    };
-    let brier_skill =
-        (n > 0 && skill_reference > f64::EPSILON).then(|| 1.0 - skill_brier / skill_reference);
-    let measurable = n >= MIN_OUTCOMES;
+    // Binary Brier of the tested pair against always predicting its base rate.
+    let brier_skill = (n > 0 && base > f64::EPSILON).then(|| 1.0 - top_label_brier / base);
+    let measurable = n >= min_outcomes;
     let calibrated = measurable
         && z.is_some_and(|z| z.abs() < Z_CRITICAL)
         && brier_skill.is_some_and(|skill| skill > 0.0);
@@ -254,10 +391,17 @@ fn summarize(
         engine,
         family,
         answer_kind,
+        pooled_families: Vec::new(),
         n,
         unscored,
+        evidence: if measurable {
+            "measurable"
+        } else {
+            "anecdotal"
+        },
         brier,
-        baseline_brier,
+        top_label_brier,
+        baseline_brier: report_baseline.then_some(base),
         ece,
         rate,
         z,

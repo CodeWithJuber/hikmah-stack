@@ -2,8 +2,8 @@ mod common;
 
 use common::temp_store;
 use hikmah_kernel::decision_port::{
-    admit, ask, AdmittedAnswer, DecisionEngine, DecisionRequest, EngineDescriptor, NoEngine,
-    Question, QuestionKind, RawAnswer, RawDecision, StaticEngine,
+    admit, ask, AdmittedAnswer, DecisionEngine, DecisionRequest, EngineDescriptor, Forecast,
+    NoEngine, Question, QuestionKind, RawAnswer, RawDecision, StaticEngine,
 };
 use hikmah_kernel::policy::KernelPolicy;
 use hikmah_kernel::trace::{OutcomeRecord, Trace, TraceKind};
@@ -375,4 +375,91 @@ fn outcomes_are_validated_and_purged_outcomes_do_not_count() {
     let report = store.calibration(None);
     assert!(report.families.is_empty());
     assert_eq!(report.unresolved_predictions, 1);
+}
+
+fn forecast(kind: &str, p: f64, value: Option<&str>, space: &[&str]) -> Forecast {
+    Forecast {
+        family: "hostlelo.hero.ctr".into(),
+        question: "Does the plan-finder hero raise plan clicks?".into(),
+        kind: kind.into(),
+        p,
+        value: value.map(str::to_string),
+        answer_space: space.iter().map(|s| s.to_string()).collect(),
+        source: "human:juber".into(),
+        locator: Some("DECISIONS.md#hero".into()),
+    }
+}
+
+#[test]
+fn people_and_agents_record_forecasts_that_are_never_verified() {
+    let mut store = MemoryStore::open(temp_store("forecast"), KernelPolicy::default()).unwrap();
+    let trace = forecast("noul", 0.7, None, &[]).into_trace().unwrap();
+    assert!(!trace.is_model_authored() && !trace.provenance.verified);
+    let record = trace.prediction.clone().unwrap();
+    assert_eq!(record.engine, "human:juber");
+    assert_eq!((record.value.as_str(), record.p), ("true", Some(0.7)));
+    assert_eq!(record.answer_space, vec!["true", "false"]);
+    let (stored, _) = store.remember(trace.clone()).unwrap();
+
+    // A forecast is resolved by an outcome, never by marking it verified.
+    let mut verified = trace.clone();
+    verified.id.clear();
+    verified.provenance.verified = true;
+    let refusal = |result: hikmah_kernel::Result<_>| match result {
+        Err(hikmah_kernel::KernelError::Invalid(message)) => message,
+        other => panic!("expected a refusal, got {other:?}"),
+    };
+    assert!(refusal(store.remember(verified)).contains("cannot be marked verified"));
+    let mut outcome = Trace::new(TraceKind::Outcome, "clicks rose 12%", "analytics");
+    outcome.outcome = Some(OutcomeRecord {
+        prediction_id: stored.id,
+        observed: "true".into(),
+    });
+    store.remember(outcome).unwrap();
+
+    // Neither kind of forecaster can pose as the other in calibration.
+    let mut poses_as_engine = trace.clone();
+    poses_as_engine.id.clear();
+    poses_as_engine.prediction.as_mut().unwrap().engine = "jev@jev-1.13.0".into();
+    assert!(refusal(store.remember(poses_as_engine)).contains("must match its source"));
+    let mut poses_as_person = trace;
+    poses_as_person.id.clear();
+    poses_as_person.provenance.source = "model:jev@jev-1.13.0".into();
+    assert!(refusal(store.remember(poses_as_person)).contains("must match its source"));
+
+    let choice = forecast("choice", 0.6, Some("b"), &["a", "b", "c"])
+        .into_trace()
+        .unwrap();
+    let record = choice.prediction.unwrap();
+    assert_eq!((record.value.as_str(), record.p), ("b", Some(0.6)));
+    assert!(
+        record.probabilities.is_empty(),
+        "the rest of the distribution is not invented"
+    );
+}
+
+#[test]
+fn malformed_forecasts_are_refused() {
+    let mut engine_source = forecast("noul", 0.7, None, &[]);
+    engine_source.source = "model:jev@jev-1.13.0".into();
+    let mut anonymous = forecast("noul", 0.7, None, &[]);
+    anonymous.source = "unknown".into();
+    let mut no_family = forecast("noul", 0.7, None, &[]);
+    no_family.family = " ".into();
+    for bad in [
+        engine_source,
+        anonymous,
+        no_family,
+        forecast("noul", 1.2, None, &[]),
+        forecast("noul", f64::NAN, None, &[]),
+        forecast("noul", 0.7, Some("false"), &[]),
+        forecast("choice", 0.7, Some("d"), &["a", "b"]),
+        forecast("choice", 0.7, None, &["a", "b"]),
+        forecast("choice", 0.7, Some("a"), &["a"]),
+        forecast("choice", 0.7, Some("a"), &["a", "a"]),
+        forecast("score", 0.7, Some("3"), &["0", "1", "2"]),
+        forecast("guess", 0.7, None, &[]),
+    ] {
+        assert!(bad.clone().into_trace().is_err(), "accepted {bad:?}");
+    }
 }

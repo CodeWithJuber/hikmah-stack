@@ -28,7 +28,7 @@ The table below separates executable evidence from architectural intent.
 | Deterministic challenge lanes; risk and human-impact lanes veto on one item | [`deliberate`](runtime/hikmah-kernel/src/council.rs) | Implemented and tested; lanes read counts supplied by the caller; not LLM agents |
 | Typed decision port (choice / score / noul) with all-or-nothing admission | [`decision_port`](runtime/hikmah-kernel/src/decision_port.rs), [tests](runtime/hikmah-kernel/tests/decision_port.rs), [design](docs/DECISION_PORT.md) | Implemented and tested |
 | TypeSafe Jev adapter (opt-in, `jev` feature) | [`jev`](runtime/hikmah-kernel/src/jev.rs) and [tests](runtime/hikmah-kernel/tests/jev.rs) with a captured `jev-1.13.0` response | Implemented; offline tests plus an ignored live test |
-| Outcome write-back and calibration (Brier, ECE) | [`calibration`](runtime/hikmah-kernel/src/calibration.rs), CLI `outcome` and `calibration` | Implemented and tested; a family is `measurable` at 50 outcomes and `calibrated` only if Spiegelhalter's Z test does not reject (alpha 0.05) and it beats the base-rate Brier |
+| Outcome write-back and calibration (Brier, ECE) | [`calibration`](runtime/hikmah-kernel/src/calibration.rs), CLI `predict`, `outcome`, and `calibration` | Implemented and tested. Engine answers and forecasts recorded by people or agents (`predict`) get separate rows on the same family. A family is `measurable` at `calibration_min_outcomes` resolved predictions (policy, default 50); below that its Brier is shown with its `n`, labelled `anecdotal`. It is `calibrated` only if Spiegelhalter's Z test does not reject (alpha 0.05) and it beats the base-rate Brier. `--family-prefix` adds one pooled row per forecaster |
 | Narrow completion-claim hygiene | [Rust Truth Gate](runtime/hikmah-kernel/src/hook.rs), [launcher](hooks/truth_gate.sh), [Python fallback](hooks/truth_gate.py), [golden cases](hooks/truth_gate_cases.json) | Implemented. Rust and Python pass the same golden cases in CI. Deliberately not a fact-checker. The rules rarely fire on real agent "done" messages. The optional engine mode is a measured screen: it catches about one false completion in six ([numbers](docs/DECISION_PORT.md#truth-gate-engine-mode-measured-not-assumed)). With `HIKMAH_HOOK_RECORD` and `hikmah gate-threshold`, the threshold can be re-chosen from your own recorded outcomes ([how](docs/DECISION_PORT.md#choosing-the-threshold-from-your-own-traffic)). |
 | Reusable host packaging | [Codex manifest](.codex-plugin/plugin.json), [Claude manifest](.claude-plugin/plugin.json), [Kimi manifest](kimi.plugin.json), and [portable skills](skills/) | Configuration and instruction layer; versions, names, and hook paths checked by `hikmah validate` |
 | Automated validation | [GitHub Actions workflow](.github/workflows/validate.yml): fmt, Clippy (with and without network features), Rust tests, package validation, Python golden cases, hook launcher smoke test | CI-backed repository validation |
@@ -157,7 +157,7 @@ cargo run -p hikmah-kernel -- verify-ledger
 
 By default, local memory is written to `.hikmah/memory.jsonl`.
 
-Limits, thresholds, and every recall weight are fields of the kernel policy. `hikmah policy --print-defaults` prints them. `hikmah --policy my-policy.json <command>` (or `HIKMAH_POLICY=my-policy.json`) overrides any subset. Missing fields keep their defaults, unknown fields and out-of-range values are errors, and the hook never reads the policy. The defaults are design choices, not calibrated values.
+Memory limits, recall and consolidation thresholds, every recall weight, and the calibration sample minimum (`calibration_min_outcomes`) are fields of the kernel policy. `hikmah policy --print-defaults` prints them. The decision, council, and statistical constants (for example the reversibility band, the council's block level, or the Z test's 1.96) are code, not policy. `hikmah --policy my-policy.json <command>` (or `HIKMAH_POLICY=my-policy.json`) overrides any subset. Missing fields keep their defaults, unknown fields and out-of-range values are errors, and the hook never reads the policy. The defaults are design choices, not calibrated values.
 
 ### Run planning and decision examples
 
@@ -189,7 +189,14 @@ cargo run -p hikmah-kernel -- outcome --prediction <prediction-trace-id> --obser
 cargo run -p hikmah-kernel -- calibration
 
 # Let the engine estimate criteria an option has no evidence for (ranked, never counted as evidence).
-cargo run -p hikmah-kernel -- decide --frame examples/decision-frame.json --engine jev
+# Hard-blocked options are not sent; the other estimates share one request (split at 32 questions).
+# --record stores each admitted estimate as an unverified prediction (family decide.<criterion>).
+cargo run -p hikmah-kernel -- decide --frame examples/decision-frame.json --engine jev --record
+
+# Record a person's or agent's forecast on the same footing, then compare forecasters.
+cargo run -p hikmah-kernel -- predict --family site.hero.ctr --type noul --p 0.7 \
+  --question "Does the new hero raise plan clicks?" --source human:alex
+cargo run -p hikmah-kernel -- calibration --family-prefix site.
 ```
 
 See [Typed Decision Port](docs/DECISION_PORT.md). Build without any network code with `cargo build --no-default-features`.

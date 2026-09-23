@@ -13,6 +13,8 @@
 //!   Calibration is earned from recorded outcomes (see [`crate::calibration`]).
 //! - Admitted answers can be recorded as `Prediction` traces with a `model:` source. They are
 //!   never verified, never supersede anything, and never count as consolidation evidence.
+//! - A person or agent records a [`Forecast`] in the same shape, under its own source, so its
+//!   calibration can be compared with an engine's on the same family.
 use crate::error::{KernelError, Result};
 use crate::secrets::contains_secret;
 use crate::trace::{PredictionRecord, Trace, TraceKind, MODEL_SOURCE_PREFIX};
@@ -499,6 +501,135 @@ impl AdmittedDecision {
             traces.push(trace);
         }
         traces
+    }
+}
+
+/// A forecast made by a person or an agent (`hikmah predict`), recorded in the same
+/// [`PredictionRecord`] shape as an engine answer so `hikmah calibration` can score both on the
+/// same family. The record's `engine` is the source principal (for example `human:alex`), so
+/// the two get separate rows. A forecast is never verified; an outcome resolves it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Forecast {
+    /// Calibration bucket, shared with any engine that forecasts the same thing.
+    pub family: String,
+    /// What is being forecast, in words.
+    pub question: String,
+    /// `noul`, `choice`, or `score`.
+    pub kind: String,
+    /// Noul: probability of `true`. Choice and score: probability of `value`.
+    pub p: f64,
+    /// Choice and score: the forecast answer, one of `answer_space`. Noul: none (it follows
+    /// from `p`).
+    pub value: Option<String>,
+    /// Choice: the option ids. Score: the levels, lowest first. Noul: empty (`true`/`false`).
+    pub answer_space: Vec<String>,
+    /// Who forecast, for example `human:alex` or `agent:planner`. Never a `model:` source.
+    pub source: String,
+    /// Where the forecast was made, for example a decision record.
+    pub locator: Option<String>,
+}
+
+impl Forecast {
+    /// Validate the forecast and build its `prediction` trace. Engine answers are refused here:
+    /// they are recorded from an admitted decision, so no one can hand-write an engine's row.
+    pub fn into_trace(self) -> Result<Trace> {
+        let invalid = |message: String| Err(KernelError::Invalid(message));
+        let source = self.source.trim().to_string();
+        let family = self.family.trim().to_string();
+        let question = self.question.trim().to_string();
+        if source.is_empty() || source.eq_ignore_ascii_case("unknown") {
+            return invalid("a forecast needs a named source, for example `human:<name>`".into());
+        }
+        if source.to_ascii_lowercase().starts_with(MODEL_SOURCE_PREFIX) {
+            return invalid(format!(
+                "`{MODEL_SOURCE_PREFIX}` sources are engine answers; record them with `hikmah ask --record` or `hikmah decide --record`"
+            ));
+        }
+        if family.is_empty() || question.is_empty() {
+            return invalid("a forecast needs a family and a question".into());
+        }
+        if !unit(self.p) {
+            return invalid(format!("--p {} is not a probability in [0, 1]", self.p));
+        }
+        let kind = self.kind.trim().to_ascii_lowercase();
+        let (value, answer_space, probabilities) = match kind.as_str() {
+            "noul" => {
+                if self.value.is_some() || !self.answer_space.is_empty() {
+                    return invalid(
+                        "a noul forecast is P(true) in --p; it takes no --value or --answer-space"
+                            .into(),
+                    );
+                }
+                (
+                    if self.p >= 0.5 { "true" } else { "false" }.to_string(),
+                    vec!["true".to_string(), "false".to_string()],
+                    BTreeMap::from([
+                        ("true".to_string(), self.p),
+                        ("false".to_string(), 1.0 - self.p),
+                    ]),
+                )
+            }
+            "choice" | "score" => {
+                let space: Vec<String> = self
+                    .answer_space
+                    .iter()
+                    .map(|v| v.trim().to_string())
+                    .collect();
+                let bounds = if kind == "choice" { 2..=255 } else { 2..=10 };
+                let distinct: BTreeSet<&str> = space.iter().map(String::as_str).collect();
+                if !bounds.contains(&space.len())
+                    || distinct.len() != space.len()
+                    || distinct.contains("")
+                {
+                    return invalid(format!(
+                        "a {kind} forecast needs --answer-space with {}..={} distinct, non-empty values",
+                        bounds.start(),
+                        bounds.end()
+                    ));
+                }
+                let Some(value) = self.value.as_deref().map(str::trim) else {
+                    return invalid(format!("a {kind} forecast needs --value"));
+                };
+                if !distinct.contains(value) {
+                    return invalid(format!("--value `{value}` is not one of {space:?}"));
+                }
+                // Only P(value) is known. The rest of the distribution is not invented, so
+                // calibration scores this forecast on its top label.
+                (value.to_string(), space, BTreeMap::new())
+            }
+            other => {
+                return invalid(format!(
+                    "unknown forecast type `{other}` (expected noul, choice, or score)"
+                ))
+            }
+        };
+        let created_at_ms = crate::trace::now_ms();
+        let seed = format!("{source}\n{family}\n{question}\n{created_at_ms}");
+        let request_id = format!("fc_{}", &blake3::hash(seed.as_bytes()).to_hex()[..16]);
+        let mut trace = Trace::new(
+            TraceKind::Prediction,
+            format!("{question} → {value} (p={:.2}, {source})", self.p),
+            source.clone(),
+        );
+        trace.created_at_ms = created_at_ms;
+        trace.tags = vec!["prediction".into(), family.clone()];
+        trace.salience = 0.3;
+        trace.confidence = 0.5;
+        trace.provenance.locator = self.locator;
+        trace.prediction = Some(PredictionRecord {
+            request_id,
+            question_id: family.clone(),
+            family,
+            answer_kind: kind,
+            engine: source,
+            p: Some(self.p),
+            value,
+            probabilities,
+            answer_space,
+            calibrated: false,
+        });
+        trace.validate()?;
+        Ok(trace)
     }
 }
 

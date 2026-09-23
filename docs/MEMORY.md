@@ -101,7 +101,8 @@ Before durable memory writes:
 - keep source/authority separate from confidence;
 - do not auto-promote model output into belief;
 - quarantine contradictory or suspicious claims rather than overwriting;
-- never persist secrets merely because they appeared in conversation (`remember` and every other write refuse a trace whose content, tags, claim key or value, source, or locator matches the credential detector in `secrets.rs`; it recognizes well-known credential shapes such as tokens, keys, `KEY=value` assignments, and passwords in URLs, and is not a DLP system);
+- never persist secrets merely because they appeared in conversation (`remember` and every other write refuse a trace whose content, tags, claim key or value, source, locator, or prediction family, value, or answer space matches the credential detector in `secrets.rs`; it recognizes well-known credential shapes such as tokens, keys, `KEY=value` assignments, and passwords in URLs, and is not a DLP system);
 - scope preferences to the person/project/context that supplied them;
 - attach outcomes to prior actions so failed plans do not become success-pattern memories (`hikmah outcome` links an observed outcome to a recorded prediction);
-- never let model output verify itself: `model:` sources cannot be verified, cannot supersede, and cannot resolve predictions.
+- never let model output verify itself: `model:` sources cannot be verified, cannot supersede, and cannot resolve predictions;
+- treat a forecast as a forecast, whoever made it: a person's or agent's forecast (`hikmah predict`) is a `prediction` trace too, never verified, and resolved only by an outcome.
