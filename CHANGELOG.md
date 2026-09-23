@@ -25,6 +25,13 @@ Fixes for gaps found by the research-to-implementation audit.
 - **`verify-ledger` JSON:** integrity findings (records removed, ledger rewritten, unreadable head file, pinned head mismatch, unacknowledged records) moved from `warnings` to a new `errors` field. `warnings` keeps non-integrity notes (skipped legacy events, a torn tail) and now also says when a store with records has no head file. `ok` is unchanged in meaning: true exactly when `errors` is empty.
 - **Docs corrected.** The README said tamper evidence holds while the head file is out of reach. That was wrong for appends, which needed no access to the head file. README and `SECURITY.md` now say the unkeyed chain detects truncation and rewrites, not appends by someone who can also update or delete the head file. A keyed chain is recorded as a follow-up in `SECURITY.md`, with the reason it is not shipped yet: a key file the agent's OS user can read does not stop the agent.
 
+### Provenance
+- **An agent can no longer verify its own memory by default.** `--source` and `--verified` were accepted as given, so an agent could write `--source human:<name> --verified`. New `principal` module: when a coding-agent host's variables are present (`CLAUDECODE`, `CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_*`, `GEMINI_CLI`, `AI_AGENT`; empty values and common configuration settings such as `CODEX_HOME` and `CLAUDE_CODE_USE_BEDROCK` do not count), the CLI does the following:
+  - `remember` and `outcome` record the locator `agent-session:<host>:<session id>`. A caller `--locator` is kept after it, and the session id is sanitized and capped at 64 characters.
+  - `remember --verified` is refused before the store is opened. The error explains that a person must attest, from their own terminal, by superseding the trace with a verified correction.
+
+  `Trace::validate` also refuses a verified trace whose locator starts with `agent-session:`, on every write path. This is a guard, not authentication: a process that clears those variables is not detected, and `source` stays a caller claim. README, `docs/MEMORY.md`, and `SECURITY.md` now say so.
+
 ### Decisions
 - **Missing evidence is no longer imputed as the average of the known criteria.** Each option now reports `score_interval: [lo, hi]`, with every unscored criterion at the scale minimum for `lo` and at the maximum for `hi`. This is interval arithmetic with no invented prior.
   - **Ranking.** Admissible options rank by `lo`, then `hi`, then the existing tie-breaks.

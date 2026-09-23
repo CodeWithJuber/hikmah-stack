@@ -9,6 +9,7 @@ use hikmah_kernel::hook::{
 };
 use hikmah_kernel::planner::{plan, PlanProblem};
 use hikmah_kernel::policy::KernelPolicy;
+use hikmah_kernel::principal;
 use hikmah_kernel::recall::RecallQuery;
 use hikmah_kernel::trace::{parse_deadline, OutcomeRecord, PrivacyClass, Trace, TraceKind};
 use hikmah_kernel::validate::validate_repo;
@@ -52,7 +53,9 @@ enum Command {
         kind: String,
         #[arg(long)]
         content: String,
-        /// Who wrote this. Use `model:<engine>` for model output; model traces are never verified.
+        /// Who wrote this, as claimed by the caller (not authenticated). Use `model:<engine>` for
+        /// model output; model traces are never verified. Inside a detected AI agent session the
+        /// locator records `agent-session:<host>:<id>`.
         #[arg(long, default_value = "unknown")]
         source: String,
         #[arg(long)]
@@ -76,6 +79,9 @@ enum Command {
         /// Deadline for commitments: epoch milliseconds, `YYYY-MM-DD[THH:MM[:SS]]` (UTC), or `+<n>h` / `+<n>d`.
         #[arg(long)]
         deadline: Option<String>,
+        /// A person checked this claim. Refused inside a detected AI agent session (`CLAUDECODE`,
+        /// `CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_*`, `GEMINI_CLI`, `AI_AGENT`): run it from your own
+        /// terminal.
         #[arg(long)]
         verified: bool,
     },
@@ -179,7 +185,8 @@ enum Command {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
     },
-    /// Record the observed outcome of a prediction (from a non-model principal).
+    /// Record the observed outcome of a prediction (from a non-model principal). Inside a
+    /// detected AI agent session the locator records `agent-session:<host>:<id>`.
     Outcome {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
@@ -333,7 +340,6 @@ fn run() -> Result<()> {
             deadline,
             verified,
         } => {
-            let mut memory = MemoryStore::open(store, policy()?)?;
             let mut trace = Trace::new(TraceKind::from_str(&kind)?, content, source);
             if trace.kind == TraceKind::Prediction {
                 return Err(KernelError::Invalid(
@@ -353,6 +359,11 @@ fn run() -> Result<()> {
             if let Some(deadline) = deadline {
                 trace.deadline_ms = Some(parse_deadline(&deadline, trace.created_at_ms)?);
             }
+            // Before the store is opened, so a refused write creates nothing.
+            if let Some(agent) = principal::detect_from_env() {
+                agent.stamp(&mut trace)?;
+            }
+            let mut memory = MemoryStore::open(store, policy()?)?;
             let (trace, conflicts) = memory.remember(trace)?;
             print_json(&json!({"trace": trace, "conflicts": conflicts}))?;
         }
@@ -486,13 +497,16 @@ fn run() -> Result<()> {
             source,
             note,
         } => {
-            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             let content = note.unwrap_or_else(|| format!("Outcome for {prediction}: {observed}"));
             let mut trace = Trace::new(TraceKind::Outcome, content, source);
             trace.outcome = Some(OutcomeRecord {
                 prediction_id: prediction,
                 observed,
             });
+            if let Some(agent) = principal::detect_from_env() {
+                agent.stamp(&mut trace)?;
+            }
+            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             let (trace, _) = memory.remember(trace)?;
             print_json(&trace)?;
         }

@@ -129,6 +129,7 @@ fn a_policy_file_changes_recall_behaviour() {
 
 fn hikmah(args: &[&str], policy_env: Option<&str>) -> Value {
     let mut command = Command::new(env!("CARGO_BIN_EXE_hikmah"));
+    common::without_agent_session(&mut command);
     command.args(args).env_remove("HIKMAH_POLICY");
     if let Some(path) = policy_env {
         command.env("HIKMAH_POLICY", path);

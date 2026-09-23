@@ -656,7 +656,7 @@ fn unacknowledged_record_listings_never_echo_a_credential() {
 }
 
 fn hikmah(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_hikmah"))
+    common::without_agent_session(&mut Command::new(env!("CARGO_BIN_EXE_hikmah")))
         .args(args)
         .env_remove("HIKMAH_POLICY")
         .output()

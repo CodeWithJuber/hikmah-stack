@@ -36,3 +36,16 @@ pub fn line_count(path: &PathBuf) -> usize {
         .filter(|l| !l.trim().is_empty())
         .count()
 }
+
+/// Remove every AI-agent marker from a child process's environment, so CLI tests behave the same
+/// inside and outside an agent session (this suite often runs under one).
+pub fn without_agent_session(command: &mut std::process::Command) -> &mut std::process::Command {
+    for (name, _) in std::env::vars_os() {
+        if let Some(name) = name.to_str() {
+            if hikmah_kernel::principal::is_agent_marker(name) {
+                command.env_remove(name);
+            }
+        }
+    }
+    command
+}
