@@ -127,7 +127,8 @@ enum Command {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
     },
-    /// Verify the hash chain, the head file, and (optionally) a pinned head hash.
+    /// Verify the hash chain, the head file, and (optionally) a pinned head hash. Records past
+    /// the head that no hikmah write acknowledged are listed under `unacknowledged`.
     VerifyLedger {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
@@ -135,8 +136,12 @@ enum Command {
         expect_head: Option<String>,
         /// Accept the current ledger as the new head after a deliberate repair (writes are
         /// refused while the ledger and its head file disagree).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "accept_tail")]
         reset_head: bool,
+        /// Acknowledge records appended after the head file, after inspecting them: prints them
+        /// and moves the head to the end. Refuses if earlier records were removed or rewritten.
+        #[arg(long)]
+        accept_tail: bool,
     },
     Plan {
         #[arg(long)]
@@ -403,8 +408,13 @@ fn run() -> Result<()> {
             store,
             expect_head,
             reset_head,
+            accept_tail,
         } => {
             let mut memory = MemoryStore::open_existing(store, policy()?)?;
+            if accept_tail {
+                print_json(&memory.accept_tail()?)?;
+                return Ok(());
+            }
             if reset_head {
                 let head = memory.reset_head()?;
                 print_json(&json!({"head_reset": head}))?;

@@ -15,6 +15,16 @@ Fixes for gaps found by the research-to-implementation audit.
 - Added the missing regression test for stale-belief suppression: after a supersession, and after reopening the store, the replaced belief is not recalled by default and the latest correction is. `docs/EVALUATION.md` claimed this coverage before the test existed.
 - Redundancy folding no longer folds or penalizes a claim against a claim it contradicts. Before, two near-identical sentences with different claim values could collapse into one result and hide the disagreement.
 
+### Ledger
+- **A forged append is no longer approved by the next write.** The chain is unkeyed, so anyone who can write the ledger can append a chain-valid record. Before, `verify-ledger` only warned about records past the head file, and the next ordinary write moved the head over them without a word. Now:
+  - `verify-ledger` fails (`ok: false`, exit 1) and lists each record past the head under a new `unacknowledged` field (seq, event, trace id, kind, source, verified, claim, and an 80-character preview; anything shaped like a credential is withheld);
+  - writes are refused with an integrity error that lists those records;
+  - new `hikmah verify-ledger --accept-tail` (`MemoryStore::accept_tail`) acknowledges them after inspection. It refuses when earlier records were removed or rewritten; that still needs `--reset-head`.
+
+  A crash between a record write and its head update now also needs `--accept-tail` once. A reader that sees records past its head snapshot takes a shared lock on the `.lock` sidecar and re-reads the head before reporting them, so verifying during concurrent writes raises no false alarm (stress-tested).
+- **`verify-ledger` JSON:** integrity findings (records removed, ledger rewritten, unreadable head file, pinned head mismatch, unacknowledged records) moved from `warnings` to a new `errors` field. `warnings` keeps non-integrity notes (skipped legacy events, a torn tail) and now also says when a store with records has no head file. `ok` is unchanged in meaning: true exactly when `errors` is empty.
+- **Docs corrected.** The README said tamper evidence holds while the head file is out of reach. That was wrong for appends, which needed no access to the head file. README and `SECURITY.md` now say the unkeyed chain detects truncation and rewrites, not appends by someone who can also update or delete the head file. A keyed chain is recorded as a follow-up in `SECURITY.md`, with the reason it is not shipped yet: a key file the agent's OS user can read does not stop the agent.
+
 ### Decisions
 - **Missing evidence is no longer imputed as the average of the known criteria.** Each option now reports `score_interval: [lo, hi]`, with every unscored criterion at the scale minimum for `lo` and at the maximum for `hi`. This is interval arithmetic with no invented prior.
   - **Ranking.** Admissible options rank by `lo`, then `hi`, then the existing tie-breaks.

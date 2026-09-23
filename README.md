@@ -18,7 +18,7 @@ The table below separates executable evidence from architectural intent.
 | Demonstrated capability | Inspectable proof | Evidence level |
 |---|---|---|
 | Typed agent memory with provenance, confidence, privacy, deadlines, claims, and correction links | [`Trace`, `Provenance`, and validation](runtime/hikmah-kernel/src/trace.rs) | Implemented; model-authored traces can never be marked verified |
-| Append-only, sequence-numbered, hash-chained local ledger | [`MemoryStore`](runtime/hikmah-kernel/src/ledger.rs) and [ledger tests](runtime/hikmah-kernel/tests/ledger.rs) | Implemented and tested: validate-before-write, exclusive file lock, concurrent writers, torn-tail repair, head file for truncation, pinned-head check, legacy v1 ledgers |
+| Append-only, sequence-numbered, hash-chained local ledger | [`MemoryStore`](runtime/hikmah-kernel/src/ledger.rs) and [ledger tests](runtime/hikmah-kernel/tests/ledger.rs) | Implemented and tested: validate-before-write, exclusive file lock, concurrent writers, torn-tail repair, head file for truncation and unacknowledged appends, pinned-head check, legacy v1 ledgers |
 | Contradiction-aware structured claims | [Conflict detection](runtime/hikmah-kernel/src/claims.rs) and tests ([consolidation](runtime/hikmah-kernel/tests/consolidation.rs), [conflicts](runtime/hikmah-kernel/tests/conflicts.rs)) | Implemented and tested (Unicode NFC, case-sensitive values, supersession); recall lists open conflicts and supersession links beside each result, and `hikmah conflicts` lists every open conflict. Detection only: the kernel never picks a winner |
 | Relevance-gated contextual recall with metadata scaling and duplicate folding | [Recall](runtime/hikmah-kernel/src/recall.rs) and [recall tests](runtime/hikmah-kernel/tests/recall.rs) | Implemented and tested; lexical, not semantic |
 | Evidence-preserving consolidation proposals | [`consolidation_proposals`](runtime/hikmah-kernel/src/consolidation.rs) | Implemented and tested; no automatic promotion; model output never counts as support |
@@ -38,11 +38,11 @@ The table below separates executable evidence from architectural intent.
 | Area | Current state |
 |---|---|
 | Core runtime | Working Rust CLI and library reference implementation |
-| Persistence | Local append-only JSONL, hash-chained over exact payload bytes, with an exclusive write lock, torn-tail repair, and a head file. Tamper evidence holds only while the head file (or a pinned head hash) is out of reach of whoever writes the ledger |
+| Persistence | Local append-only JSONL, hash-chained over exact payload bytes, with an exclusive write lock, torn-tail repair, and a head file. The chain is not keyed, so it detects edits, truncation, and rewrites, not forged appends: records appended without a head update fail `verify-ledger` and block writes until `verify-ledger --accept-tail`, but anyone who can also update or delete the head file can append undetected. Only a head hash pinned outside the writer's reach (`--expect-head`) catches that |
 | Retrieval | Deterministic relevance gate (terms or tags must match), light stemming, CJK bigrams, metadata scaling, duplicate folding; no embeddings |
 | Model integration | Typed `DecisionEngine` port with `NoEngine` and an opt-in TypeSafe Jev adapter; the text `ProposalEngine` still ships only `NoModel` |
 | Agent packaging | Portable instruction skills and thin Codex, Claude Code, and Kimi manifests |
-| Tests | 120 unit and integration tests (plus 1 ignored live Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
+| Tests | 126 unit and integration tests (plus 1 ignored live Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
 | Deployment | Local source/CLI use; no hosted service or public production deployment is claimed |
 
 ### What this repository does not claim
@@ -153,7 +153,7 @@ cargo run -p hikmah-kernel -- fulfill --id <commitment-trace-id>
 cargo run -p hikmah-kernel -- verify-ledger
 ```
 
-`--source` defaults to `unknown`. Use `model:<engine>` for anything a model wrote; the kernel refuses to mark such traces verified or to let them supersede others. `verify-ledger` exits non-zero when the chain, the head file, or a pinned `--expect-head` does not match. While they disagree, writes are refused; after a deliberate repair, `verify-ledger --reset-head` accepts the current ledger.
+`--source` defaults to `unknown`. Use `model:<engine>` for anything a model wrote; the kernel refuses to mark such traces verified or to let them supersede others. `verify-ledger` exits non-zero when the chain, the head file, or a pinned `--expect-head` does not match, and when records follow the head file that no hikmah write acknowledged (it lists them under `unacknowledged`). While they disagree, writes are refused. After inspecting appended records, `verify-ledger --accept-tail` acknowledges them; after a deliberate repair, `verify-ledger --reset-head` accepts the current ledger.
 
 By default, local memory is written to `.hikmah/memory.jsonl`.
 

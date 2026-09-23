@@ -1,12 +1,16 @@
 mod common;
 
 use common::{copy_fixture, line_count, temp_store};
+use hikmah_kernel::ledger::LedgerPayload;
 use hikmah_kernel::policy::KernelPolicy;
 use hikmah_kernel::recall::RecallQuery;
 use hikmah_kernel::trace::{PrivacyClass, Trace, TraceKind, TraceStatus};
 use hikmah_kernel::{KernelError, MemoryStore};
+use serde_json::Value;
 use std::fs;
 use std::io::Write;
+use std::path::Path;
+use std::process::Command;
 
 fn open(path: &std::path::Path) -> MemoryStore {
     MemoryStore::open(path, KernelPolicy::default()).unwrap()
@@ -195,7 +199,7 @@ fn truncation_is_detected_through_the_head_file() {
     fs::write(&path, format!("{}\n", kept.join("\n"))).unwrap();
     let report = open(&path).verify_report(None).unwrap();
     assert!(!report.ok);
-    assert!(report.warnings.iter().any(|w| w.contains("removed")));
+    assert!(report.errors.iter().any(|w| w.contains("removed")));
 }
 
 #[test]
@@ -381,7 +385,7 @@ fn an_unreadable_head_file_is_reported_not_fatal() {
     fs::write(&head_path, b"").unwrap();
     let report = open(&path).verify_report(None).unwrap();
     assert!(!report.ok);
-    assert!(report.warnings.iter().any(|w| w.contains("unreadable")));
+    assert!(report.errors.iter().any(|w| w.contains("unreadable")));
 }
 
 #[test]
@@ -462,4 +466,286 @@ fn a_file_that_is_not_a_ledger_is_never_truncated() {
     fs::write(&torn, br#"{"se"#).unwrap();
     open(&torn).remember(note("after the crash")).unwrap();
     assert_eq!(open(&torn).record_count(), 1);
+}
+
+/// Append a chain-valid v2 record the way someone with write access to the file (but not using
+/// hikmah) could: the chain is unkeyed, so the hash is computable by anyone.
+fn forge_append(path: &Path, trace: Trace) {
+    let text = fs::read_to_string(path).unwrap();
+    let last: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    let seq = last["seq"].as_u64().unwrap() + 1;
+    let prev = last["hash"].as_str().unwrap().to_string();
+    let payload = serde_json::to_string(&LedgerPayload::Remember {
+        trace: Box::new(trace),
+    })
+    .unwrap();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"hikmah-ledger-v2\n");
+    hasher.update(seq.to_string().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(prev.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(payload.as_bytes());
+    let hash = hasher.finalize().to_hex().to_string();
+    let line = format!(
+        "{{\"seq\":{seq},\"prev_hash\":\"{prev}\",\"v\":2,\"payload\":{payload},\"hash\":\"{hash}\"}}\n"
+    );
+    fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .unwrap()
+        .write_all(line.as_bytes())
+        .unwrap();
+}
+
+/// The audit's forged record: a verified claim from a source that never wrote it.
+fn forged_claim() -> Trace {
+    let mut trace = Trace::new(
+        TraceKind::Observation,
+        "WHMCS currency id for INR is 9",
+        "whmcs-snapshot",
+    );
+    trace.id = "tr_forged000000001".into();
+    trace.claim_key = Some("whmcs.currency.inr".into());
+    trace.claim_value = Some("9".into());
+    trace.provenance.verified = true;
+    trace
+}
+
+#[test]
+fn forged_appends_are_refused_until_explicitly_accepted() {
+    let path = temp_store("forged-append");
+    let mut store = open(&path);
+    store.remember(note("first")).unwrap();
+    store.remember(note("second")).unwrap();
+    drop(store);
+    forge_append(&path, forged_claim());
+
+    // The chain itself is valid, so the store opens; verification fails with an error, not a
+    // warning, and lists the record for inspection.
+    let mut store = open(&path);
+    assert_eq!(store.record_count(), 3);
+    let report = store.verify_report(None).unwrap();
+    assert!(!report.ok, "{report:?}");
+    assert!(report.errors.iter().any(|e| e.contains("--accept-tail")));
+    assert_eq!(report.unacknowledged.len(), 1);
+    let forged = &report.unacknowledged[0];
+    assert_eq!(
+        (forged.seq, forged.event.as_str(), forged.trace_id.as_str()),
+        (3, "remember", "tr_forged000000001")
+    );
+    assert_eq!(forged.verified, Some(true));
+    assert_eq!(forged.claim.as_deref(), Some("whmcs.currency.inr=9"));
+    assert!(store.verify().is_err());
+
+    // The next ordinary write must not approve it: refused, nothing written, record listed.
+    let before = line_count(&path);
+    match store.remember(note("ordinary write")) {
+        Err(KernelError::Integrity { seq, message }) => {
+            assert_eq!(seq, 3);
+            assert!(message.contains("tr_forged000000001"), "{message}");
+            assert!(message.contains("whmcs.currency.inr=9"), "{message}");
+            assert!(message.contains("--accept-tail"), "{message}");
+        }
+        other => panic!("expected an integrity refusal, got {other:?}"),
+    }
+    assert_eq!(line_count(&path), before, "nothing may be written");
+
+    // Accepting is explicit and reports exactly what was accepted.
+    let acceptance = store.accept_tail().unwrap();
+    assert_eq!(acceptance.accepted, report.unacknowledged);
+    assert_eq!(acceptance.head.unwrap().seq, 3);
+    store.remember(note("after acceptance")).unwrap();
+    let reopened = open(&path);
+    let report = reopened.verify_report(None).unwrap();
+    assert!(report.ok && report.unacknowledged.is_empty(), "{report:?}");
+    // Nothing left to accept.
+    assert!(open(&path).accept_tail().unwrap().accepted.is_empty());
+}
+
+#[test]
+fn accepting_the_tail_never_accepts_a_rewrite_or_truncation() {
+    let path = temp_store("accept-tail-truncated");
+    let mut store = open(&path);
+    for i in 0..3 {
+        store.remember(note(&format!("event {i}"))).unwrap();
+    }
+    drop(store);
+    let text = fs::read_to_string(&path).unwrap();
+    let kept: Vec<&str> = text.lines().take(2).collect();
+    fs::write(&path, format!("{}\n", kept.join("\n"))).unwrap();
+    assert!(matches!(
+        open(&path).accept_tail(),
+        Err(KernelError::Integrity { .. })
+    ));
+    assert!(!open(&path).verify_report(None).unwrap().ok);
+
+    // Without a head file there is nothing to extend; the deliberate path is --reset-head.
+    let legacy = copy_fixture("ledger_v1.jsonl");
+    assert!(matches!(
+        open(&legacy).accept_tail(),
+        Err(KernelError::Invalid(_))
+    ));
+    let report = open(&legacy).verify_report(None).unwrap();
+    assert!(report.ok);
+    assert!(report.warnings.iter().any(|w| w.contains("no head file")));
+}
+
+#[test]
+fn a_reader_that_saw_a_write_in_flight_does_not_raise_a_false_alarm() {
+    // A writer syncs its records before it updates the head. A lock-free reader that reads the
+    // head before a write and the ledger after it sees records past its head snapshot; they are
+    // not forgeries if the head acknowledges them by the time the reader verifies.
+    let path = temp_store("in-flight");
+    let mut writer = open(&path);
+    writer.remember(note("first")).unwrap();
+    let head_path = writer.head_path();
+    let head_before = fs::read(&head_path).unwrap();
+    writer.remember(note("second")).unwrap();
+    let head_after = fs::read(&head_path).unwrap();
+
+    // Freeze the moment between the record sync and the head update.
+    fs::write(&head_path, &head_before).unwrap();
+    let reader = open(&path);
+    assert_eq!(reader.record_count(), 2);
+    let in_flight = reader.verify_report(None).unwrap();
+    assert!(
+        !in_flight.ok,
+        "still unacknowledged (a crash here needs --accept-tail)"
+    );
+
+    // The write completes: the reader's snapshot is now acknowledged.
+    fs::write(&head_path, &head_after).unwrap();
+    let report = reader.verify_report(None).unwrap();
+    assert!(report.ok, "{report:?}");
+
+    // The head has since moved past the reader's snapshot: still no false alarm.
+    fs::write(&head_path, &head_before).unwrap();
+    let stale = open(&path);
+    fs::write(&head_path, &head_after).unwrap();
+    writer.remember(note("third")).unwrap();
+    let report = stale.verify_report(None).unwrap();
+    assert!(report.ok, "{report:?}");
+}
+
+#[test]
+fn unacknowledged_record_listings_never_echo_a_credential() {
+    let path = temp_store("forged-secret");
+    let mut store = open(&path);
+    store.remember(note("first")).unwrap();
+    drop(store);
+    let token = "ghp_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
+    let mut leaked = note("placeholder");
+    leaked.id = "tr_forged000000002".into();
+    leaked.content = format!("deploy with {token}");
+    forge_append(&path, leaked);
+
+    let mut store = open(&path);
+    let report = store.verify_report(None).unwrap();
+    let listed = serde_json::to_string(&report).unwrap();
+    assert!(listed.contains("tr_forged000000002") && !listed.contains(token));
+    match store.remember(note("ordinary write")) {
+        Err(KernelError::Integrity { message, .. }) => {
+            assert!(
+                message.contains("withheld") && !message.contains(token),
+                "{message}"
+            )
+        }
+        other => panic!("expected an integrity refusal, got {other:?}"),
+    }
+}
+
+fn hikmah(args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_hikmah"))
+        .args(args)
+        .env_remove("HIKMAH_POLICY")
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn the_cli_refuses_writes_after_a_forged_append_until_accept_tail() {
+    let path = temp_store("forged-cli");
+    let store = path.to_str().unwrap();
+    let remember = |content: &str| {
+        hikmah(&[
+            "remember",
+            "--store",
+            store,
+            "--kind",
+            "belief",
+            "--content",
+            content,
+        ])
+    };
+    assert!(remember("first").status.success());
+    forge_append(&path, forged_claim());
+
+    let refused = remember("second");
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("tr_forged000000001") && stderr.contains("--accept-tail"));
+
+    let verify = hikmah(&["verify-ledger", "--store", store]);
+    assert_eq!(verify.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&verify.stdout).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(
+        report["unacknowledged"][0]["trace_id"],
+        "tr_forged000000001"
+    );
+
+    let accepted = hikmah(&["verify-ledger", "--store", store, "--accept-tail"]);
+    assert!(accepted.status.success());
+    let accepted: Value = serde_json::from_slice(&accepted.stdout).unwrap();
+    assert_eq!(accepted["accepted"][0]["seq"], 2);
+
+    assert!(remember("second").status.success());
+    assert!(hikmah(&["verify-ledger", "--store", store])
+        .status
+        .success());
+}
+
+#[test]
+fn verifying_during_concurrent_writes_never_raises_a_false_alarm() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let path = temp_store("verify-while-writing");
+    open(&path).remember(note("seed")).unwrap();
+    let done = Arc::new(AtomicBool::new(false));
+    let readers: Vec<_> = (0..2)
+        .map(|_| {
+            let (path, done) = (path.clone(), done.clone());
+            std::thread::spawn(move || {
+                let mut checks = 0;
+                while !done.load(Ordering::SeqCst) || checks == 0 {
+                    let report = open(&path).verify_report(None).unwrap();
+                    assert!(report.ok, "false alarm: {report:?}");
+                    checks += 1;
+                }
+                checks
+            })
+        })
+        .collect();
+    let writers: Vec<_> = (0..4)
+        .map(|t| {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let mut store = open(&path);
+                for i in 0..10 {
+                    store
+                        .remember(note(&format!("writer {t} event {i}")))
+                        .unwrap();
+                }
+            })
+        })
+        .collect();
+    for handle in writers {
+        handle.join().unwrap();
+    }
+    done.store(true, Ordering::SeqCst);
+    for handle in readers {
+        assert!(handle.join().unwrap() > 0);
+    }
+    assert_eq!(open(&path).record_count(), 41);
 }

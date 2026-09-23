@@ -13,9 +13,15 @@
 //! and write each batch with a single `write_all`. A torn final line (crash mid-write) is ignored
 //! on read and truncated by the next writer. A `<store>.head` file records the latest
 //! `{seq, hash}`: it is read before the ledger (so a concurrent writer cannot cause a false
-//! alarm), checked under the lock before every write (so a write cannot paper over a truncation or
-//! rewrite), and can be pinned externally through `verify_report(Some(head))`. `reset_head`
-//! accepts the current ledger after a deliberate repair.
+//! alarm), checked under the lock before every write (so a write cannot paper over a truncation, a
+//! rewrite, or records appended without a head update), and can be pinned externally through
+//! `verify_report(Some(head))`. `accept_tail` acknowledges appended records after inspection;
+//! `reset_head` accepts the current ledger after a deliberate repair.
+//!
+//! The chain is unkeyed: anyone who can write the ledger can compute valid hashes. On its own it
+//! detects edits, reordering, truncation, and rewrites relative to the head file, not appends by
+//! someone who can also update or delete the head file. Only a head pinned outside the writer's
+//! reach closes that gap.
 use crate::claims::{detect_conflicts, ClaimConflict};
 use crate::error::{KernelError, Result};
 use crate::policy::KernelPolicy;
@@ -90,14 +96,151 @@ pub struct LedgerHead {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct VerifyReport {
-    /// Chain, sequence numbers, hashes, and head checks all passed.
+    /// Chain, sequence numbers, hashes, and head checks all passed (`errors` is empty).
     pub ok: bool,
     pub records: usize,
     pub head: Option<LedgerHead>,
     /// `true` when a `<store>.head` file exists and matched the chain.
     pub head_file_checked: bool,
-    /// Non-integrity problems: events that could not be applied, a torn tail, records past the head.
+    /// Integrity findings; any entry makes `ok` false. Records removed or rewritten, an unreadable
+    /// head file, records past the head that no write acknowledged, a pinned head mismatch.
+    pub errors: Vec<String>,
+    /// Non-integrity problems: events that could not be applied, a torn tail, no head file.
     pub warnings: Vec<String>,
+    /// Records past the head file that no hikmah write acknowledged (appended by another program,
+    /// an older binary, or left by a crash before the head update). Writes are refused until they
+    /// are inspected and accepted with [`MemoryStore::accept_tail`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unacknowledged: Vec<RecordSummary>,
+}
+
+/// One ledger record, summarized for a person to inspect before accepting it. Free text is cut to
+/// a short preview, and text that looks like a credential is withheld.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RecordSummary {
+    pub seq: u64,
+    /// `remember`, `supersede`, `fulfill`, or `purge`.
+    pub event: String,
+    /// The trace the event writes or changes.
+    pub trace_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified: Option<bool>,
+    /// `claim_key=claim_value`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim: Option<String>,
+    /// Content preview, purge reason, or the superseding trace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl RecordSummary {
+    fn of(record: &LedgerRecord) -> Self {
+        let mut summary = Self {
+            seq: record.seq,
+            event: "unreadable".into(),
+            trace_id: String::new(),
+            kind: None,
+            source: None,
+            verified: None,
+            claim: None,
+            detail: None,
+        };
+        let Ok(payload) = record.payload() else {
+            return summary;
+        };
+        match payload {
+            LedgerPayload::Remember { trace } => {
+                summary.event = "remember".into();
+                summary.trace_id = preview(&trace.id);
+                summary.kind = Some(trace.kind.to_string());
+                summary.source = Some(preview(&trace.provenance.source));
+                summary.verified = Some(trace.provenance.verified);
+                summary.claim = trace
+                    .claim_key
+                    .as_ref()
+                    .zip(trace.claim_value.as_ref())
+                    .map(|(key, value)| preview(&format!("{key}={value}")));
+                summary.detail = Some(preview(&trace.content));
+            }
+            LedgerPayload::Supersede { old_id, new_id } => {
+                summary.event = "supersede".into();
+                summary.trace_id = preview(&old_id);
+                summary.detail = Some(format!("superseded by {}", preview(&new_id)));
+            }
+            LedgerPayload::Fulfill { id } => {
+                summary.event = "fulfill".into();
+                summary.trace_id = preview(&id);
+            }
+            LedgerPayload::Purge { id, reason } => {
+                summary.event = "purge".into();
+                summary.trace_id = preview(&id);
+                summary.detail = Some(preview(&reason));
+            }
+        }
+        summary
+    }
+}
+
+impl std::fmt::Display for RecordSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "seq {} {} {}", self.seq, self.event, self.trace_id)?;
+        let mut facts = Vec::new();
+        facts.extend(self.kind.clone());
+        facts.extend(self.source.as_ref().map(|s| format!("source {s}")));
+        if self.verified == Some(true) {
+            facts.push("verified".into());
+        }
+        facts.extend(self.claim.as_ref().map(|c| format!("claim {c}")));
+        if !facts.is_empty() {
+            write!(f, " ({})", facts.join(", "))?;
+        }
+        if let Some(detail) = &self.detail {
+            write!(f, ": {detail:?}")?;
+        }
+        Ok(())
+    }
+}
+
+/// What [`MemoryStore::accept_tail`] acknowledged.
+#[derive(Debug, Clone, Serialize)]
+pub struct TailAcceptance {
+    pub accepted: Vec<RecordSummary>,
+    pub head: Option<LedgerHead>,
+}
+
+const PREVIEW_CHARS: usize = 80;
+/// At most this many unacknowledged records are listed in a refusal message.
+const LISTED_IN_ERRORS: usize = 10;
+
+/// A single-line, bounded preview of free text that never echoes something shaped like a credential.
+fn preview(text: &str) -> String {
+    if crate::secrets::contains_secret(text) {
+        return "[withheld: looks like a credential]".into();
+    }
+    let flat: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    match flat.char_indices().nth(PREVIEW_CHARS) {
+        Some((cut, _)) => format!("{}...", &flat[..cut]),
+        None => flat,
+    }
+}
+
+fn list_records(summaries: &[RecordSummary]) -> String {
+    let mut listed: Vec<String> = summaries
+        .iter()
+        .take(LISTED_IN_ERRORS)
+        .map(ToString::to_string)
+        .collect();
+    if summaries.len() > LISTED_IN_ERRORS {
+        listed.push(format!("and {} more", summaries.len() - LISTED_IN_ERRORS));
+    }
+    listed.join("; ")
 }
 
 /// The `<store>.head` file as read *before* the ledger (so a concurrent writer can never make
@@ -426,13 +569,15 @@ impl MemoryStore {
         } else {
             Err(KernelError::Integrity {
                 seq: report.records as u64,
-                message: report.warnings.join("; "),
+                message: report.errors.join("; "),
             })
         }
     }
 
     /// Full verification report. `expected_head` pins the latest hash (for example a value kept
-    /// in CI or in git) so a wholesale re-chain by someone with write access is detected.
+    /// in CI or in git) so a wholesale re-chain by someone with write access is detected. When the
+    /// loaded ledger holds records past its head snapshot, this waits for in-flight writes (a
+    /// shared lock on the `<store>.lock` sidecar) before reporting them as unacknowledged.
     pub fn verify_report(&self, expected_head: Option<&str>) -> Result<VerifyReport> {
         let mut prev = GENESIS.to_string();
         for record in &self.records {
@@ -463,13 +608,19 @@ impl MemoryStore {
             ));
         }
         let head = self.head();
-        let mut ok = true;
+        let mut errors = Vec::new();
+        let mut unacknowledged = Vec::new();
         let mut head_file_checked = false;
         match &self.head_at_load {
-            HeadState::Missing => {}
+            HeadState::Missing => {
+                if !self.records.is_empty() {
+                    warnings.push(
+                        "no head file: truncation and appended records cannot be detected until a write (or `hikmah verify-ledger --reset-head`) creates one".into(),
+                    );
+                }
+            }
             HeadState::Unreadable(error) => {
-                ok = false;
-                warnings.push(format!(
+                errors.push(format!(
                     "head file is unreadable ({error}); inspect it, then run `hikmah verify-ledger --reset-head` to accept the current ledger"
                 ));
             }
@@ -477,23 +628,23 @@ impl MemoryStore {
                 head_file_checked = true;
                 let count = self.records.len() as u64;
                 if stored.seq > count {
-                    ok = false;
-                    warnings.push(format!(
+                    errors.push(format!(
                         "ledger has {count} records but its head file records seq {}: records were removed",
                         stored.seq
                     ));
                 } else if stored.seq > 0
                     && self.records[(stored.seq - 1) as usize].hash != stored.hash
                 {
-                    ok = false;
-                    warnings.push(format!(
+                    errors.push(format!(
                         "record {} does not match the head file hash: the ledger was rewritten",
                         stored.seq
                     ));
-                } else if stored.seq < count {
-                    warnings.push(format!(
-                        "{} record(s) after the recorded head (written by an older binary, or a crash before the head update)",
-                        count - stored.seq
+                } else if stored.seq < count && !self.snapshot_acknowledged_now() {
+                    unacknowledged = self.summaries_after(stored.seq);
+                    errors.push(format!(
+                        "{} record(s) after the recorded head (seq {}) were never acknowledged by a hikmah write: appended by another program, written by an older binary, or left by a crash before the head update. Writes are refused until you inspect them and run `hikmah verify-ledger --accept-tail`",
+                        count - stored.seq,
+                        stored.seq
                     ));
                 }
             }
@@ -501,19 +652,75 @@ impl MemoryStore {
         if let Some(expected) = expected_head {
             let actual = head.as_ref().map(|h| h.hash.as_str()).unwrap_or(GENESIS);
             if actual != expected {
-                ok = false;
-                warnings.push(format!(
+                errors.push(format!(
                     "head hash {actual} does not match the pinned head {expected}"
                 ));
             }
         }
         Ok(VerifyReport {
-            ok,
+            ok: errors.is_empty(),
             records: self.records.len(),
             head,
             head_file_checked,
+            errors,
             warnings,
+            unacknowledged,
         })
+    }
+
+    /// Summaries of the records after `seq` (for inspection before [`Self::accept_tail`]).
+    fn summaries_after(&self, seq: u64) -> Vec<RecordSummary> {
+        self.records
+            .iter()
+            .skip(seq as usize)
+            .map(RecordSummary::of)
+            .collect()
+    }
+
+    /// A lock-free reader can load the ledger while a write is in flight: the writer syncs its
+    /// records before it updates the head, so this snapshot may hold records its head snapshot
+    /// does not cover yet. Only in that case, wait for in-flight writes to finish (a shared lock
+    /// on the `<store>.lock` sidecar, which every writer holds exclusively until its head update
+    /// has landed), then re-read the head and, if it has moved past this snapshot, the ledger.
+    /// Returns whether every record in this snapshot is acknowledged by the head now.
+    fn snapshot_acknowledged_now(&self) -> bool {
+        let Some(last) = self.records.last() else {
+            return true;
+        };
+        let lock = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.lock_path())
+            .or_else(|_| File::open(self.lock_path()));
+        // Without the lock an in-flight write cannot be told apart from an unacknowledged tail;
+        // report the tail rather than guess.
+        let Ok(lock) = lock else {
+            return false;
+        };
+        if lock.lock_shared().is_err() {
+            return false;
+        }
+        let n = self.records.len() as u64;
+        match read_head(&self.head_path()) {
+            HeadState::Present(now) if now.seq == n => now.hash == last.hash,
+            HeadState::Present(now) if now.seq > n => {
+                // Confirm this snapshot is a prefix of the ledger that the newer head covers.
+                let Ok(fresh) = Self::load(self.path.clone(), self.policy.clone()) else {
+                    return false;
+                };
+                match &fresh.head_at_load {
+                    HeadState::Present(head) => {
+                        head.seq >= n
+                            && head.seq <= fresh.records.len() as u64
+                            && fresh.records[(head.seq - 1) as usize].hash == head.hash
+                            && fresh.records[(n - 1) as usize].hash == last.hash
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
     }
 
     fn append_batch(&mut self, payloads: Vec<LedgerPayload>) -> Result<()> {
@@ -613,8 +820,11 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Under the write lock: refuse to append when the head file shows the ledger was truncated
-    /// or rewritten, so an ordinary write can never paper over tamper evidence.
+    /// Under the write lock: refuse to append when the head file shows the ledger was truncated or
+    /// rewritten, or holds records no hikmah write acknowledged, so an ordinary write can never
+    /// paper over tamper evidence or silently approve a forged append. Every completed write
+    /// updates the head before it releases the lock, so a head behind the ledger here is never
+    /// another writer in flight.
     fn check_head_before_write(&self) -> Result<()> {
         let count = self.records.len() as u64;
         match read_head(&self.head_path()) {
@@ -633,11 +843,63 @@ impl MemoryStore {
                         seq: head.seq,
                         message: "the ledger no longer matches its head file (records removed or rewritten); refusing to write. Inspect it, then run `hikmah verify-ledger --reset-head` to accept the current ledger".into(),
                     })
+                } else if head.seq < count {
+                    Err(KernelError::Integrity {
+                        seq: head.seq + 1,
+                        message: format!(
+                            "{} record(s) after the recorded head (seq {}) were never acknowledged by a hikmah write (appended by another program, written by an older binary, or left by a crash before the head update); refusing to write so they are not silently accepted. Unacknowledged: {}. Inspect them, then run `hikmah verify-ledger --accept-tail` to accept them",
+                            count - head.seq,
+                            head.seq,
+                            list_records(&self.summaries_after(head.seq))
+                        ),
+                    })
                 } else {
                     Ok(())
                 }
             }
         }
+    }
+
+    /// Acknowledge records appended after the head file (after inspecting them): the head moves
+    /// to the end of the ledger and writes are allowed again. Unlike [`Self::reset_head`] this
+    /// accepts only appended records. It refuses when records were removed or rewritten, when the
+    /// head file is unreadable, and when there is no head file to extend.
+    pub fn accept_tail(&mut self) -> Result<TailAcceptance> {
+        let (_lock, mut file) = self.open_locked()?;
+        self.sync_tail(&mut file)?;
+        let count = self.records.len() as u64;
+        let head = match read_head(&self.head_path()) {
+            HeadState::Present(head) => head,
+            HeadState::Missing => {
+                return Err(KernelError::Invalid(
+                    "there is no head file, so no records are marked unacknowledged; the next write creates one (or run `hikmah verify-ledger --reset-head`)".into(),
+                ))
+            }
+            HeadState::Unreadable(error) => {
+                return Err(KernelError::Integrity {
+                    seq: count,
+                    message: format!(
+                        "head file is unreadable ({error}); inspect the ledger, then run `hikmah verify-ledger --reset-head`"
+                    ),
+                })
+            }
+        };
+        if head.seq > count
+            || (head.seq > 0 && self.records[(head.seq - 1) as usize].hash != head.hash)
+        {
+            return Err(KernelError::Integrity {
+                seq: head.seq,
+                message: "records before the head were removed or rewritten; accepting the tail cannot repair that. Inspect the ledger, then run `hikmah verify-ledger --reset-head`".into(),
+            });
+        }
+        let accepted = self.summaries_after(head.seq);
+        if !accepted.is_empty() {
+            self.write_head()?;
+        }
+        Ok(TailAcceptance {
+            accepted,
+            head: self.head(),
+        })
     }
 
     /// Explicitly accept the current ledger as the new head (after a deliberate repair).
