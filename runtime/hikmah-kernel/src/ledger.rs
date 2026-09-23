@@ -1164,3 +1164,63 @@ fn apply_payload(
         LedgerPayload::Purge { id, .. } => set_status(id, TraceStatus::Purged),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::trace::OutcomeRecord;
+
+    fn state(prediction_status: TraceStatus) -> BTreeMap<String, TraceEntry> {
+        let mut prediction = Trace::new(TraceKind::Prediction, "Will it break?", "model:fixture");
+        prediction.id = "tr_prediction".into();
+        let mut note = Trace::new(TraceKind::Observation, "CI is green", "ci");
+        note.id = "tr_note".into();
+        [(prediction, prediction_status), (note, TraceStatus::Active)]
+            .into_iter()
+            .map(|(trace, status)| (trace.id.clone(), TraceEntry { trace, status }))
+            .collect()
+    }
+
+    fn outcome_for(prediction_id: &str) -> LedgerPayload {
+        let mut trace = Trace::new(TraceKind::Outcome, "observed in CI", "ci");
+        trace.id = "tr_outcome".into();
+        trace.outcome = Some(OutcomeRecord {
+            prediction_id: prediction_id.into(),
+            observed: "false".into(),
+        });
+        LedgerPayload::Remember {
+            trace: Box::new(trace),
+        }
+    }
+
+    /// The under-lock re-check of an outcome's prediction: `remember` checks it first against the
+    /// handle's own view, which can be stale, so the batch check is the one that must hold.
+    #[test]
+    fn an_outcome_batch_is_checked_against_the_prediction_it_resolves() {
+        let active = state(TraceStatus::Active);
+        assert!(validate_batch(&active, &[outcome_for("tr_prediction")]).is_ok());
+        assert!(matches!(
+            validate_batch(&active, &[outcome_for("tr_missing")]),
+            Err(KernelError::NotFound(id)) if id == "tr_missing"
+        ));
+        assert!(matches!(
+            validate_batch(&active, &[outcome_for("tr_note")]),
+            Err(KernelError::Invalid(message)) if message.contains("not a prediction")
+        ));
+        for status in [TraceStatus::Purged, TraceStatus::Superseded] {
+            assert!(matches!(
+                validate_batch(&state(status), &[outcome_for("tr_prediction")]),
+                Err(KernelError::Invalid(message)) if message.contains("not active")
+            ));
+        }
+        // Purged earlier in the same batch.
+        let purge = LedgerPayload::Purge {
+            id: "tr_prediction".into(),
+            reason: "recorded by mistake".into(),
+        };
+        assert!(matches!(
+            validate_batch(&active, &[purge, outcome_for("tr_prediction")]),
+            Err(KernelError::Invalid(message)) if message.contains("not active")
+        ));
+    }
+}

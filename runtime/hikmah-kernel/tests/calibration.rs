@@ -1,12 +1,12 @@
 mod common;
 
-use common::temp_store;
+use common::{line_count, temp_store};
 use hikmah_kernel::calibration::{spiegelhalter_z, FamilyCalibration, MIN_OUTCOMES};
 use hikmah_kernel::decision_port::{
     ask, DecisionRequest, EngineDescriptor, Question, QuestionKind, RawAnswer, StaticEngine,
 };
 use hikmah_kernel::policy::KernelPolicy;
-use hikmah_kernel::trace::{OutcomeRecord, Trace, TraceKind};
+use hikmah_kernel::trace::{OutcomeRecord, Trace, TraceKind, TraceStatus};
 use hikmah_kernel::{KernelError, MemoryStore};
 use std::collections::BTreeMap;
 
@@ -219,4 +219,49 @@ fn purged_predictions_do_not_steer_calibration() {
     drop(store);
     let reopened = MemoryStore::open_existing(&path, KernelPolicy::default()).unwrap();
     assert_eq!(reopened.calibration(None).families[0].n, 1);
+}
+
+#[test]
+fn an_outcome_for_a_prediction_purged_by_another_process_is_refused() {
+    // Two handles on one store, as two processes would have: `remember` checks the prediction
+    // against its own (stale) view first, so the refusal must come from the check under the
+    // writer lock, after the other handle's purge has been read.
+    let request = noul_request();
+    let path = temp_store("calibration-purge-race");
+    let mut agent = MemoryStore::open(&path, KernelPolicy::default()).unwrap();
+    let decision = ask(&engine(RawAnswer::Noul { noul: 0.3 }, "breaks"), &request).unwrap();
+    let prediction = agent
+        .remember(decision.prediction_traces(&request).remove(0))
+        .unwrap()
+        .0
+        .id;
+    let mut person = MemoryStore::open_existing(&path, KernelPolicy::default()).unwrap();
+    person.purge(&prediction, "recorded by mistake").unwrap();
+    assert_eq!(
+        agent.get(&prediction).unwrap().status,
+        TraceStatus::Active,
+        "this handle has not seen the purge yet"
+    );
+
+    let lines = line_count(&path);
+    let mut outcome = Trace::new(TraceKind::Outcome, "observed in CI", "ci");
+    outcome.outcome = Some(OutcomeRecord {
+        prediction_id: prediction.clone(),
+        observed: "false".into(),
+    });
+    match agent.remember(outcome) {
+        // The in-memory check names the status ("Purged"); the under-lock check does not.
+        Err(KernelError::Invalid(message)) => assert!(
+            message.contains("not active") && !message.contains("Purged"),
+            "{message}"
+        ),
+        other => panic!("expected a refusal under the lock, got {other:?}"),
+    }
+    assert_eq!(line_count(&path), lines, "nothing may be written");
+    assert_eq!(agent.get(&prediction).unwrap().status, TraceStatus::Purged);
+    let report = MemoryStore::open_existing(&path, KernelPolicy::default())
+        .unwrap()
+        .calibration(None);
+    assert!(report.families.is_empty(), "{report:?}");
+    assert_eq!(report.unresolved_predictions, 0);
 }
