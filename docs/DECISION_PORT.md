@@ -14,7 +14,7 @@ It sits beside the text-shaped `ProposalEngine`, not in place of it. Text propos
 | Credentials never leave | `ask()` refuses a request whose state, instructions, options, or level labels match common credential shapes, before any engine is called. It uses a linear-time matcher (`secrets.rs`). |
 | Confidence is earned | Engine probabilities pass through as reported, with `calibrated: false`. Calibration comes from recorded outcomes (`hikmah calibration`). |
 | Model output is not memory | Recorded answers become `prediction` traces with a `model:` source. They are never verified, cannot supersede, stay out of default recall, and are not consolidation evidence. |
-| Only non-model principals resolve predictions | An `outcome` trace from a `model:` source is rejected, and the observed value must belong to the prediction's answer space. Purged or superseded outcomes do not count. A prediction without any reported probability is stored with `p: null` and counted as `unscored`, never given an invented probability. |
+| Only non-model principals resolve predictions | An `outcome` trace from a `model:` source is rejected, and the observed value must belong to the prediction's answer space. Purged or superseded outcomes do not count, and neither do purged or superseded predictions (in `calibration` and `gate-threshold` alike); an outcome for a prediction that is no longer active is refused. A prediction without any reported probability is stored with `p: null` and counted as `unscored`, never given an invented probability. |
 | Hard blocks are never averaged away | Engines can estimate decision-criterion scores. `hard_blocks` stay caller- and kernel-owned, and blocked options always rank last. |
 
 ## Question types

@@ -1,7 +1,8 @@
 //! Calibration earned from outcomes.
 //!
-//! Pairs every recorded `Prediction` trace with the latest *active* `Outcome` trace that resolves
-//! it (written by a non-model principal; purged or superseded outcomes do not count) and reports,
+//! Pairs every *active* `Prediction` trace (a purged or superseded prediction was retracted and
+//! does not count) with the latest *active* `Outcome` trace that resolves it (written by a
+//! non-model principal; purged or superseded outcomes do not count) and reports,
 //! per engine and question family: Brier score, expected calibration error over 5 equal-width
 //! bins, accuracy or base rate, and how many predictions carried no probability at all.
 //!
@@ -114,6 +115,11 @@ impl MemoryStore {
         let mut groups: BTreeMap<Key, (Vec<Pair>, usize)> = BTreeMap::new();
         let mut unresolved = 0;
         for entry in self.all() {
+            // A purged or superseded prediction was retracted: it must not count toward the
+            // metrics or the unresolved total (the same rule as `gate_threshold`).
+            if entry.status != TraceStatus::Active {
+                continue;
+            }
             let trace = &entry.trace;
             let Some(prediction) = &trace.prediction else {
                 continue;

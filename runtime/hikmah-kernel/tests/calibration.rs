@@ -7,7 +7,7 @@ use hikmah_kernel::decision_port::{
 };
 use hikmah_kernel::policy::KernelPolicy;
 use hikmah_kernel::trace::{OutcomeRecord, Trace, TraceKind};
-use hikmah_kernel::MemoryStore;
+use hikmah_kernel::{KernelError, MemoryStore};
 use std::collections::BTreeMap;
 
 fn engine(answer: RawAnswer, question: &str) -> StaticEngine {
@@ -164,4 +164,59 @@ fn spiegelhalter_z_is_undefined_without_variance() {
     assert!(spiegelhalter_z(&[(0.5, 1.0), (0.5, 0.0)]).is_none());
     assert!(spiegelhalter_z(&[(1.0, 1.0), (0.0, 0.0)]).is_none());
     assert!(spiegelhalter_z(&[]).is_none());
+}
+
+#[test]
+fn purged_predictions_do_not_steer_calibration() {
+    // Audit finding: `calibration` counted a purged prediction while `gate-threshold` did not.
+    let request = noul_request();
+    let path = temp_store("calibration-purged");
+    let mut store = MemoryStore::open(&path, KernelPolicy::default()).unwrap();
+    let predict = |store: &mut MemoryStore, p: f64| {
+        let decision = ask(&engine(RawAnswer::Noul { noul: p }, "breaks"), &request).unwrap();
+        let prediction = decision.prediction_traces(&request).remove(0);
+        store.remember(prediction).unwrap().0.id
+    };
+    let outcome = |prediction: &str, observed: &str| {
+        let mut trace = Trace::new(TraceKind::Outcome, "observed in CI", "ci");
+        trace.outcome = Some(OutcomeRecord {
+            prediction_id: prediction.to_string(),
+            observed: observed.to_string(),
+        });
+        trace
+    };
+
+    let kept = predict(&mut store, 0.2);
+    store.remember(outcome(&kept, "false")).unwrap();
+    // Retracted after its outcome was recorded: a confident miss that must no longer count.
+    let retracted = predict(&mut store, 0.95);
+    store.remember(outcome(&retracted, "false")).unwrap();
+    store.purge(&retracted, "recorded by mistake").unwrap();
+    // Retracted before any outcome: not "unresolved" either.
+    let abandoned = predict(&mut store, 0.7);
+    store.purge(&abandoned, "wrong question").unwrap();
+    let open = predict(&mut store, 0.4);
+
+    let report = store.calibration(None);
+    assert_eq!(report.families.len(), 1);
+    let family = &report.families[0];
+    assert_eq!(
+        family.n, 1,
+        "only the active, resolved prediction: {family:?}"
+    );
+    assert!((family.brier - 0.04).abs() < 1e-9, "{family:?}");
+    assert_eq!(report.unresolved_predictions, 1, "only {open}");
+
+    // A purged prediction cannot be resolved later, and nothing is written for the attempt.
+    let records = store.record_count();
+    match store.remember(outcome(&abandoned, "true")) {
+        Err(KernelError::Invalid(message)) => assert!(message.contains("not active"), "{message}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert_eq!(store.record_count(), records);
+
+    // The same holds after reopening the store (status comes from replay, not memory).
+    drop(store);
+    let reopened = MemoryStore::open_existing(&path, KernelPolicy::default()).unwrap();
+    assert_eq!(reopened.calibration(None).families[0].n, 1);
 }

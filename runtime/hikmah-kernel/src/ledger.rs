@@ -327,6 +327,12 @@ impl MemoryStore {
                     outcome.prediction_id
                 )));
             }
+            if prediction.status != TraceStatus::Active {
+                return Err(KernelError::Invalid(format!(
+                    "cannot record an outcome for {}: the prediction is {:?}, not active, and no longer counts toward calibration",
+                    outcome.prediction_id, prediction.status
+                )));
+            }
             if let Some(record) = &prediction.trace.prediction {
                 let observed = outcome.observed.trim();
                 if !record.answer_space.is_empty()
@@ -780,6 +786,23 @@ fn validate_batch(traces: &BTreeMap<String, TraceEntry>, payloads: &[LedgerPaylo
                         "trace id already exists: {}",
                         trace.id
                     )));
+                }
+                // Re-checked under the lock: another process may have purged the prediction
+                // since `remember` looked at it.
+                if let Some(outcome) = &trace.outcome {
+                    let id = &outcome.prediction_id;
+                    let (kind, status) =
+                        lookup(id, &added).ok_or_else(|| KernelError::NotFound(id.clone()))?;
+                    if kind != TraceKind::Prediction {
+                        return Err(KernelError::Invalid(format!(
+                            "{id} is not a prediction trace"
+                        )));
+                    }
+                    if status != TraceStatus::Active || changed.contains(id) {
+                        return Err(KernelError::Invalid(format!(
+                            "cannot record an outcome for {id}: the prediction is not active"
+                        )));
+                    }
                 }
                 added.insert(trace.id.clone(), (trace.kind, TraceStatus::Active));
             }
