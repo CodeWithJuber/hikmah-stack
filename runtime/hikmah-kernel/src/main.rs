@@ -138,17 +138,20 @@ enum Command {
     VerifyLedger {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
+        /// Fail unless the latest record hash equals this value (kept somewhere the writer cannot
+        /// reach, such as CI or git). Only checked by a plain verification, so it cannot be
+        /// combined with `--accept-tail` or `--reset-head`.
         #[arg(long)]
         expect_head: Option<String>,
         /// Accept the current ledger as the new head after a deliberate repair (writes are
         /// refused while the ledger and its head file disagree). A person's decision: refused
         /// inside a detected AI agent session.
-        #[arg(long, conflicts_with = "accept_tail")]
+        #[arg(long, conflicts_with_all = ["accept_tail", "expect_head"])]
         reset_head: bool,
         /// Acknowledge records appended after the head file, after inspecting them: prints them
         /// and moves the head to the end. Refuses if earlier records were removed or rewritten.
         /// A person's decision: refused inside a detected AI agent session.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "expect_head")]
         accept_tail: bool,
     },
     Plan {

@@ -824,3 +824,45 @@ fn an_agent_session_cannot_accept_the_records_it_is_refused_over() {
         .status
         .success());
 }
+
+#[test]
+fn a_pinned_head_is_never_silently_dropped() {
+    // `--expect-head` is only checked by a plain verification; combining it with a flag that
+    // moves the head used to ignore the pin and exit 0.
+    let path = temp_store("pinned-accept");
+    let store = path.to_str().unwrap();
+    assert!(hikmah(&[
+        "remember",
+        "--store",
+        store,
+        "--kind",
+        "belief",
+        "--content",
+        "first"
+    ])
+    .status
+    .success());
+    forge_append(&path, forged_claim());
+    let head_path = open(&path).head_path();
+    let head = fs::read(&head_path).unwrap();
+    for flag in ["--accept-tail", "--reset-head"] {
+        let output = hikmah(&[
+            "verify-ledger",
+            "--store",
+            store,
+            flag,
+            "--expect-head",
+            "deadbeef",
+        ]);
+        assert_eq!(output.status.code(), Some(2), "{flag}: a usage error");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("cannot be used with"),
+            "{flag}"
+        );
+        assert_eq!(
+            fs::read(&head_path).unwrap(),
+            head,
+            "{flag} changed the head"
+        );
+    }
+}
