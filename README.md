@@ -38,11 +38,11 @@ The table below separates executable evidence from architectural intent.
 | Area | Current state |
 |---|---|
 | Core runtime | Working Rust CLI and library reference implementation |
-| Persistence | Local append-only JSONL, hash-chained over exact payload bytes, with an exclusive write lock, torn-tail repair, and a head file. The chain is not keyed, so it detects edits, truncation, and rewrites, not forged appends: records appended without a head update fail `verify-ledger` and block writes until `verify-ledger --accept-tail`, but anyone who can also update or delete the head file can append undetected. Only a head hash pinned outside the writer's reach (`--expect-head`) catches that |
+| Persistence | Local append-only JSONL, hash-chained over exact payload bytes, with an exclusive write lock, torn-tail repair, and a head file. The chain is not keyed. On its own it detects a record edited, reordered, or injected inside it. The head file adds truncation, rewrites, and records appended without a head update: those fail `verify-ledger` and block writes until a person accepts them (`verify-ledger --accept-tail` or `--reset-head`, both refused inside a detected AI agent session). Neither detects an append or re-chain by someone who can also update or delete the head file; only a head hash pinned outside the writer's reach (`--expect-head`) does |
 | Retrieval | Deterministic relevance gate (terms or tags must match), light stemming, CJK bigrams, metadata scaling, duplicate folding; no embeddings |
 | Model integration | Typed `DecisionEngine` port with `NoEngine` and an opt-in TypeSafe Jev adapter; the text `ProposalEngine` still ships only `NoModel` |
 | Agent packaging | Portable instruction skills and thin Codex, Claude Code, and Kimi manifests |
-| Tests | 132 unit and integration tests (plus 1 ignored live Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
+| Tests | 134 unit and integration tests (plus 1 ignored live Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
 | Deployment | Local source/CLI use; no hosted service or public production deployment is claimed |
 
 ### What this repository does not claim
@@ -155,9 +155,9 @@ cargo run -p hikmah-kernel -- verify-ledger
 
 `--source` defaults to `unknown`. Use `model:<engine>` for anything a model wrote; the kernel refuses to mark such traces verified or to let them supersede others. `--source` and `--verified` are claims made by whoever runs the command, and the kernel does not authenticate them.
 
-Inside an AI agent session, `remember` and `outcome` record the locator `agent-session:<host>:<session id>` (a caller `--locator` is kept after it), and `--verified` is refused. The session is detected from host variables: `CLAUDECODE`, `CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_*`, `GEMINI_CLI`, and `AI_AGENT`. A few common configuration settings such as `CODEX_HOME` and `CLAUDE_CODE_USE_BEDROCK` do not count. To verify a claim an agent recorded, a person runs `remember --verified --supersedes <id>` from their own terminal. This check stops an agent from verifying its own memory by default. It is not authentication: a process that clears those variables is not detected.
+Inside an AI agent session, `remember` and `outcome` record the locator `agent-session:<host>:<session id>` (a caller `--locator` is kept after it). `remember --verified`, `verify-ledger --accept-tail`, and `verify-ledger --reset-head` are refused, because each is a person's decision. The session is detected from host variables: `CLAUDECODE`, `CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_*`, `GEMINI_CLI`, and `AI_AGENT`. Documented configuration settings such as `CODEX_HOME`, `CLAUDE_CODE_USE_BEDROCK`, and `CLAUDE_CODE_ENABLE_TELEMETRY` do not count. To verify a claim an agent recorded, a person runs `remember --verified --supersedes <id>` from their own terminal. This check stops an agent from verifying its own memory, or approving records appended behind the ledger's back, by default. It is not authentication: a process that clears those variables is not detected. If you are refused in your own shell, for example in an IDE's integrated terminal, see "Agent sessions" in [docs/MEMORY.md](docs/MEMORY.md).
 
-`verify-ledger` exits non-zero when the chain, the head file, or a pinned `--expect-head` does not match, and when records follow the head file that no hikmah write acknowledged (it lists them under `unacknowledged`). While they disagree, writes are refused. After inspecting appended records, `verify-ledger --accept-tail` acknowledges them; after a deliberate repair, `verify-ledger --reset-head` accepts the current ledger.
+`verify-ledger` exits non-zero when the chain, the head file, or a pinned `--expect-head` does not match, and when records follow the head file that no hikmah write acknowledged (it lists them under `unacknowledged`). While they disagree, writes are refused. Reads such as `recall` still include those records, so inspect them before relying on what they claim. After a person inspects appended records, `verify-ledger --accept-tail` acknowledges them; after a deliberate repair, `verify-ledger --reset-head` accepts the current ledger.
 
 By default, local memory is written to `.hikmah/memory.jsonl`.
 
@@ -301,7 +301,7 @@ kimi.plugin.json            Kimi plugin manifest
 Hikmah ships no credentials, privileged remote service, or external database connection.
 
 - The reference store is local JSONL.
-- Hash chaining provides tamper evidence; it does not encrypt content or provide access control.
+- Hash chaining provides tamper evidence within the limits in [Security](SECURITY.md) (the chain is unkeyed); it does not encrypt content or provide access control.
 - `sensitive` persistence is refused by default.
 - A trace whose text looks like a credential (common token, key, and password shapes; not a DLP system) is refused before it is written.
 - The append-only reference ledger is not a complete right-to-delete implementation.

@@ -749,3 +749,78 @@ fn verifying_during_concurrent_writes_never_raises_a_false_alarm() {
     }
     assert_eq!(open(&path).record_count(), 41);
 }
+
+/// Run the CLI as an agent host would: its session variables set.
+fn hikmah_in_agent_session(args: &[&str]) -> std::process::Output {
+    common::without_agent_session(&mut Command::new(env!("CARGO_BIN_EXE_hikmah")))
+        .args(args)
+        .env_remove("HIKMAH_POLICY")
+        .env("CLAUDECODE", "1")
+        .env("CLAUDE_CODE_SESSION_ID", "accept-test")
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn an_agent_session_cannot_accept_the_records_it_is_refused_over() {
+    // Reviewer repro: the write refusal pointed to `--accept-tail`, and running it from the same
+    // agent session approved a forged verified claim. Accepting is now a person's decision.
+    let path = temp_store("forged-agent-accept");
+    let store = path.to_str().unwrap();
+    assert!(hikmah(&[
+        "remember",
+        "--store",
+        store,
+        "--kind",
+        "belief",
+        "--content",
+        "first"
+    ])
+    .status
+    .success());
+    forge_append(&path, forged_claim());
+    let head_path = open(&path).head_path();
+    let head = fs::read(&head_path).unwrap();
+
+    for flag in ["--accept-tail", "--reset-head"] {
+        let refused = hikmah_in_agent_session(&["verify-ledger", "--store", store, flag]);
+        assert!(!refused.status.success(), "{flag}");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            stderr.contains(&format!(
+                "verify-ledger {flag}` is refused inside an AI agent session"
+            )) && stderr.contains("CLAUDECODE")
+                && stderr.contains("ask a person"),
+            "{stderr}"
+        );
+        assert_eq!(
+            fs::read(&head_path).unwrap(),
+            head,
+            "{flag} changed the head"
+        );
+    }
+    let report = open(&path).verify_report(None).unwrap();
+    assert!(!report.ok && report.unacknowledged.len() == 1, "{report:?}");
+    // The agent's own writes stay refused until a person accepts.
+    let write = hikmah_in_agent_session(&[
+        "remember",
+        "--store",
+        store,
+        "--kind",
+        "belief",
+        "--content",
+        "second",
+    ]);
+    assert!(!write.status.success());
+
+    // A person, outside the agent session, can accept after inspecting.
+    let accepted = hikmah(&["verify-ledger", "--store", store, "--accept-tail"]);
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    assert!(hikmah(&["verify-ledger", "--store", store])
+        .status
+        .success());
+}

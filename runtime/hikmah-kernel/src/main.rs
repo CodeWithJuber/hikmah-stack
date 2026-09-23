@@ -141,11 +141,13 @@ enum Command {
         #[arg(long)]
         expect_head: Option<String>,
         /// Accept the current ledger as the new head after a deliberate repair (writes are
-        /// refused while the ledger and its head file disagree).
+        /// refused while the ledger and its head file disagree). A person's decision: refused
+        /// inside a detected AI agent session.
         #[arg(long, conflicts_with = "accept_tail")]
         reset_head: bool,
         /// Acknowledge records appended after the head file, after inspecting them: prints them
         /// and moves the head to the end. Refuses if earlier records were removed or rewritten.
+        /// A person's decision: refused inside a detected AI agent session.
         #[arg(long)]
         accept_tail: bool,
     },
@@ -421,6 +423,24 @@ fn run() -> Result<()> {
             reset_head,
             accept_tail,
         } => {
+            // Before the store is opened, so a refused acceptance touches nothing. Both flags
+            // accept records no hikmah write acknowledged, which may be a forged append.
+            if accept_tail || reset_head {
+                if let Some(agent) = principal::detect_from_env() {
+                    let (command, why) = if accept_tail {
+                        (
+                            "hikmah verify-ledger --accept-tail",
+                            "it approves ledger records that no hikmah write acknowledged, and such a record may be a forged append",
+                        )
+                    } else {
+                        (
+                            "hikmah verify-ledger --reset-head",
+                            "it accepts the ledger as it is now, including records that were removed, rewritten, or appended without a hikmah write",
+                        )
+                    };
+                    return Err(agent.refuse_person_only(command, why));
+                }
+            }
             let mut memory = MemoryStore::open_existing(store, policy()?)?;
             if accept_tail {
                 print_json(&memory.accept_tail()?)?;

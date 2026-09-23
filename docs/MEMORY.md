@@ -105,4 +105,18 @@ Before durable memory writes:
 - scope preferences to the person/project/context that supplied them;
 - attach outcomes to prior actions so failed plans do not become success-pattern memories (`hikmah outcome` links an observed outcome to a recorded prediction);
 - never let model output verify itself: `model:` sources cannot be verified, cannot supersede, and cannot resolve predictions;
-- treat `source` and `verified` as the writer's claims. The kernel does not authenticate principals, so a writer could label itself `human:<name>`. When the CLI runs inside a detected AI agent session (`CLAUDECODE`, `CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_*`, `GEMINI_CLI`, or `AI_AGENT` set), `remember` and `outcome` stamp the locator `agent-session:<host>:<session id>`, and `--verified` is refused. `Trace::validate` also refuses a verified trace with such a locator on every write path. A person verifies a claim an agent recorded by superseding it with a verified correction from their own terminal. Detection relies on those environment variables, so it keeps an agent from verifying its own memory by default but is not authentication: a process that clears them is not detected. Signed attestation with a key the agent cannot read is not implemented.
+- treat `source` and `verified` as the writer's claims. The kernel does not authenticate principals, so a writer could label itself `human:<name>`. Inside a detected AI agent session the CLI stamps writes and refuses self-verification (see "Agent sessions" below).
+
+## Agent sessions
+
+`principal.rs` detects a coding-agent session from the variables its host sets: `CLAUDECODE`, `CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_*`, `GEMINI_CLI`, or `AI_AGENT`, with a non-empty value. Documented configuration settings a person exports in their own profile (for example `CODEX_HOME`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_ENABLE_TELEMETRY`, `CLAUDE_CODE_OAUTH_TOKEN`) do not count. Inside such a session the CLI:
+
+- stamps `remember` and `outcome` with the locator `agent-session:<host>:<session id>`, keeping a caller `--locator` after it;
+- refuses `remember --verified`. `Trace::validate` also refuses a verified trace with such a locator on every write path;
+- refuses `verify-ledger --accept-tail` and `verify-ledger --reset-head`. Both accept ledger records no hikmah write acknowledged, which may be a forged append, and an agent that follows a refusal message must not be the one to approve them.
+
+A person verifies a claim an agent recorded by superseding it with a verified correction from their own terminal (`hikmah remember --verified --supersedes <id> ...`), and accepts unacknowledged records by inspecting what `hikmah verify-ledger` lists and then running `--accept-tail` there.
+
+**If you are a person and you are refused.** The refusal names the variables that were detected. An editor's integrated terminal can set some of them (Cursor can set `CURSOR_*` variables in its terminals), and so can your own shell profile. Check with `env | grep -E '^(CLAUDECODE|CLAUDE_CODE_|CODEX_|CURSOR_|GEMINI_CLI|AI_AGENT)'`, then run the command from a terminal where none of them are set, such as a plain system terminal. If a variable you set yourself is a documented setting of your agent tool, it belongs in `USER_CONFIGURATION` in `principal.rs`; please open an issue for it. An agent must not do this: the check exists so that it stops and asks a person.
+
+**Limits.** Detection reads environment variables, so it keeps an agent from verifying its own memory, or approving appended records, by default, but it is not authentication: a process that clears those variables is not detected. Signed attestation with a key the agent cannot read is not implemented.

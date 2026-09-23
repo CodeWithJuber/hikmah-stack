@@ -18,10 +18,13 @@ fn agent_sessions_are_detected_from_host_markers() {
         ("PATH", "/usr/bin"),
         ("CLAUDECODE", "1"),
         ("CLAUDE_CODE_SESSION_ID", "30a3c8d2-fdc9-5a96"),
+        // A configuration setting is still not listed as a marker inside a session.
+        ("CLAUDE_CODE_ENABLE_TELEMETRY", "1"),
     ])
     .unwrap();
     assert_eq!(claude.host, "claude-code");
     assert_eq!(claude.marker, "CLAUDECODE");
+    assert_eq!(claude.markers, ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID"]);
     assert_eq!(
         claude.locator(),
         "agent-session:claude-code:30a3c8d2-fdc9-5a96"
@@ -45,6 +48,8 @@ fn agent_sessions_are_detected_from_host_markers() {
     ])
     .unwrap();
     assert_eq!(both.host, "claude-code");
+    // Every marker is listed, whichever host identified the session.
+    assert_eq!(both.markers, ["AI_AGENT", "CLAUDECODE", "CODEX_SANDBOX"]);
 }
 
 #[test]
@@ -59,6 +64,13 @@ fn a_person_s_shell_is_not_an_agent_session() {
             ("CODEX_HOME", "/home/me/.codex"),
             ("CLAUDE_CODE_USE_BEDROCK", "1"),
             ("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "8192"),
+            ("CLAUDE_CODE_ENABLE_TELEMETRY", "1"),
+            ("CLAUDE_CODE_USE_FOUNDRY", "1"),
+            ("CLAUDE_CODE_OAUTH_TOKEN", "placeholder"),
+            (
+                "CLAUDE_CODE_GIT_BASH_PATH",
+                "C:/Program Files/Git/bin/bash.exe"
+            ),
             // Set but empty.
             ("CLAUDECODE", ""),
             ("AI_AGENT", "  "),
@@ -108,6 +120,12 @@ fn an_agent_session_cannot_verify_its_own_memory() {
         Err(KernelError::Invalid(message)) => {
             assert!(message.contains("CLAUDECODE"), "{message}");
             assert!(message.contains("own terminal"), "{message}");
+            // A person mistaken for an agent learns which variables did it and where to look.
+            assert!(
+                message.contains("Agent variables set: CLAUDECODE, CLAUDE_CODE_SESSION_ID")
+                    && message.contains("docs/MEMORY.md"),
+                "{message}"
+            );
         }
         other => panic!("expected a refusal, got {other:?}"),
     }
@@ -268,5 +286,47 @@ fn the_cli_stamps_outcomes_recorded_from_an_agent_session() {
     assert_eq!(
         outcome["provenance"]["locator"],
         "agent-session:codex:run-7"
+    );
+}
+
+#[test]
+fn accepting_unacknowledged_records_is_left_to_a_person() {
+    let message = session()
+        .refuse_person_only(
+            "hikmah verify-ledger --accept-tail",
+            "it approves records no hikmah write acknowledged",
+        )
+        .to_string();
+    for expected in [
+        "`hikmah verify-ledger --accept-tail` is refused inside an AI agent session",
+        "claude-code detected through CLAUDECODE",
+        "An agent must stop here and ask a person",
+        "from their own terminal",
+        "Agent variables set: CLAUDECODE, CLAUDE_CODE_SESSION_ID",
+    ] {
+        assert!(
+            message.contains(expected),
+            "{expected:?} missing: {message}"
+        );
+    }
+    // The refusal names no way around the check (such as clearing the variables).
+    assert!(
+        !message.contains("unset") && !message.contains("env -u"),
+        "{message}"
+    );
+
+    // A host that sets dozens of variables gets a bounded list.
+    let names: Vec<String> = (0..40)
+        .map(|i| format!("CLAUDE_CODE_RUNTIME_{i:02}"))
+        .collect();
+    let crowded = detect(names.iter().map(|name| (name.as_str(), "1"))).unwrap();
+    assert_eq!(crowded.markers.len(), 40);
+    let message = crowded
+        .refuse_person_only("hikmah verify-ledger --reset-head", "why")
+        .to_string();
+    assert!(
+        message.contains("CLAUDE_CODE_RUNTIME_04, and 35 more.")
+            && !message.contains("CLAUDE_CODE_RUNTIME_05"),
+        "{message}"
     );
 }

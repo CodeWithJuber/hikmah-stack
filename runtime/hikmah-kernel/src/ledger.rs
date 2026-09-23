@@ -16,12 +16,14 @@
 //! alarm), checked under the lock before every write (so a write cannot paper over a truncation, a
 //! rewrite, or records appended without a head update), and can be pinned externally through
 //! `verify_report(Some(head))`. `accept_tail` acknowledges appended records after inspection;
-//! `reset_head` accepts the current ledger after a deliberate repair.
+//! `reset_head` accepts the current ledger after a deliberate repair. Both are a person's
+//! decision, and the CLI refuses them inside a detected AI agent session (see [`crate::principal`]).
 //!
-//! The chain is unkeyed: anyone who can write the ledger can compute valid hashes. On its own it
-//! detects edits, reordering, truncation, and rewrites relative to the head file, not appends by
-//! someone who can also update or delete the head file. Only a head pinned outside the writer's
-//! reach closes that gap.
+//! The chain is unkeyed: anyone who can write the ledger can compute valid hashes. The chain alone
+//! detects a record edited, reordered, or injected inside it. The head file adds truncation,
+//! rewrites, and records appended without a head update. Neither detects an append or a re-chain
+//! by someone who can also update or delete the head file; only a head pinned outside the writer's
+//! reach (`verify_report(Some(head))`) does.
 use crate::claims::{detect_conflicts, ClaimConflict};
 use crate::error::{KernelError, Result};
 use crate::policy::KernelPolicy;
@@ -621,7 +623,7 @@ impl MemoryStore {
             }
             HeadState::Unreadable(error) => {
                 errors.push(format!(
-                    "head file is unreadable ({error}); inspect it, then run `hikmah verify-ledger --reset-head` to accept the current ledger"
+                    "head file is unreadable ({error}); a person must inspect it, then run `hikmah verify-ledger --reset-head` from their own terminal to accept the current ledger"
                 ));
             }
             HeadState::Present(stored) => {
@@ -642,7 +644,7 @@ impl MemoryStore {
                 } else if stored.seq < count && !self.snapshot_acknowledged_now() {
                     unacknowledged = self.summaries_after(stored.seq);
                     errors.push(format!(
-                        "{} record(s) after the recorded head (seq {}) were never acknowledged by a hikmah write: appended by another program, written by an older binary, or left by a crash before the head update. Writes are refused until you inspect them and run `hikmah verify-ledger --accept-tail`",
+                        "{} record(s) after the recorded head (seq {}) were never acknowledged by a hikmah write: appended by another program, written by an older binary, or left by a crash before the head update. Writes are refused until a person inspects them and runs `hikmah verify-ledger --accept-tail` from their own terminal",
                         count - stored.seq,
                         stored.seq
                     ));
@@ -832,7 +834,7 @@ impl MemoryStore {
             HeadState::Unreadable(error) => Err(KernelError::Integrity {
                 seq: count,
                 message: format!(
-                    "head file is unreadable ({error}); run `hikmah verify-ledger --reset-head` after inspecting the ledger"
+                    "head file is unreadable ({error}); a person must inspect the ledger, then run `hikmah verify-ledger --reset-head` from their own terminal"
                 ),
             }),
             HeadState::Present(head) => {
@@ -841,13 +843,13 @@ impl MemoryStore {
                 if rewritten {
                     Err(KernelError::Integrity {
                         seq: head.seq,
-                        message: "the ledger no longer matches its head file (records removed or rewritten); refusing to write. Inspect it, then run `hikmah verify-ledger --reset-head` to accept the current ledger".into(),
+                        message: "the ledger no longer matches its head file (records removed or rewritten); refusing to write. A person must inspect it, then run `hikmah verify-ledger --reset-head` from their own terminal to accept the current ledger".into(),
                     })
                 } else if head.seq < count {
                     Err(KernelError::Integrity {
                         seq: head.seq + 1,
                         message: format!(
-                            "{} record(s) after the recorded head (seq {}) were never acknowledged by a hikmah write (appended by another program, written by an older binary, or left by a crash before the head update); refusing to write so they are not silently accepted. Unacknowledged: {}. Inspect them, then run `hikmah verify-ledger --accept-tail` to accept them",
+                            "{} record(s) after the recorded head (seq {}) were never acknowledged by a hikmah write (appended by another program, written by an older binary, or left by a crash before the head update); refusing to write so they are not silently accepted. Unacknowledged: {}. A person must inspect them, then run `hikmah verify-ledger --accept-tail` from their own terminal to accept them (it is refused inside an AI agent session)",
                             count - head.seq,
                             head.seq,
                             list_records(&self.summaries_after(head.seq))
@@ -879,7 +881,7 @@ impl MemoryStore {
                 return Err(KernelError::Integrity {
                     seq: count,
                     message: format!(
-                        "head file is unreadable ({error}); inspect the ledger, then run `hikmah verify-ledger --reset-head`"
+                        "head file is unreadable ({error}); a person must inspect the ledger, then run `hikmah verify-ledger --reset-head` from their own terminal"
                     ),
                 })
             }
@@ -889,7 +891,7 @@ impl MemoryStore {
         {
             return Err(KernelError::Integrity {
                 seq: head.seq,
-                message: "records before the head were removed or rewritten; accepting the tail cannot repair that. Inspect the ledger, then run `hikmah verify-ledger --reset-head`".into(),
+                message: "records before the head were removed or rewritten; accepting the tail cannot repair that. A person must inspect the ledger, then run `hikmah verify-ledger --reset-head` from their own terminal".into(),
             });
         }
         let accepted = self.summaries_after(head.seq);
