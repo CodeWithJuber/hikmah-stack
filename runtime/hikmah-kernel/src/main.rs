@@ -5,7 +5,8 @@ use hikmah_kernel::decision_port::{
     ask, DecisionEngine, DecisionRequest, NoEngine, Question, QuestionKind,
 };
 use hikmah_kernel::hook::{
-    explain_batch, explain_stop_event, run_stop_hook_recording, DEFAULT_ENGINE_THRESHOLD,
+    explain_batch, explain_stop_event, run_stop_hook_recording, GateSettings,
+    DEFAULT_ENGINE_THRESHOLD,
 };
 use hikmah_kernel::planner::{plan, PlanProblem};
 use hikmah_kernel::policy::KernelPolicy;
@@ -197,7 +198,9 @@ enum Command {
     },
     /// Truth Gate Stop hook. Engine via HIKMAH_HOOK_ENGINE=jev (needs TYPESAFE_API_KEY);
     /// threshold via HIKMAH_HOOK_THRESHOLD (default 0.6, measured in harness-bench).
-    /// HIKMAH_HOOK_RECORD=<store> appends each engine probability there as a prediction.
+    /// HIKMAH_HOOK_ENGINE_LIFT=<p> (opt-in, unset by default) lets an engine answer below p lift
+    /// a rules block. HIKMAH_HOOK_RECORD=<store> appends each engine probability there as a
+    /// prediction.
     Hook,
     /// Explain the Truth Gate decision (rules verdict, engine probability, path) for a stop event
     /// on stdin, or for JSON lines with `--batch`. Same engine settings and code path as `hook`.
@@ -278,21 +281,29 @@ fn jev_engine(timeout_ms: Option<u64>) -> Result<Box<dyn DecisionEngine>> {
     Ok(Box::new(engine))
 }
 
-/// Engine and threshold for `hook` and `gate-explain`. Configuration problems never fail closed:
-/// an unusable engine setting means rules only.
-fn hook_settings() -> (Option<Box<dyn DecisionEngine>>, f64) {
-    let engine_name = std::env::var("HIKMAH_HOOK_ENGINE").unwrap_or_default();
-    let threshold = std::env::var("HIKMAH_HOOK_THRESHOLD")
+/// A probability from an environment variable; unset, unparsable, or out of range is `None`.
+fn env_probability(name: &str) -> Option<f64> {
+    std::env::var(name)
         .ok()
         .and_then(|v| v.trim().parse::<f64>().ok())
         .filter(|v| (0.0..=1.0).contains(v))
-        .unwrap_or(DEFAULT_ENGINE_THRESHOLD);
+}
+
+/// Engine and settings for `hook` and `gate-explain`. Configuration problems never break the
+/// hook: an unusable engine setting means rules only, and an unusable lift value means no lift
+/// (the default, where the rules are a hard floor).
+fn hook_settings() -> (Option<Box<dyn DecisionEngine>>, GateSettings) {
+    let engine_name = std::env::var("HIKMAH_HOOK_ENGINE").unwrap_or_default();
+    let settings = GateSettings {
+        threshold: env_probability("HIKMAH_HOOK_THRESHOLD").unwrap_or(DEFAULT_ENGINE_THRESHOLD),
+        lift: env_probability("HIKMAH_HOOK_ENGINE_LIFT"),
+    };
     let engine = if engine_name.trim().eq_ignore_ascii_case("jev") {
         jev_engine(Some(3_000)).ok()
     } else {
         None
     };
-    (engine, threshold)
+    (engine, settings)
 }
 
 #[cfg(not(feature = "jev"))]
@@ -491,7 +502,7 @@ fn run() -> Result<()> {
             print_json(&memory.calibration(family.as_deref()))?;
         }
         Command::Hook => {
-            let (engine, threshold) = hook_settings();
+            let (engine, settings) = hook_settings();
             // Opt-in measurement; recording failures never change the verdict.
             let record = std::env::var_os("HIKMAH_HOOK_RECORD")
                 .filter(|value| !value.is_empty())
@@ -500,7 +511,7 @@ fn run() -> Result<()> {
                 io::stdin().lock(),
                 io::stdout().lock(),
                 engine.as_deref(),
-                threshold,
+                settings,
                 record.as_deref(),
             )?;
         }
@@ -512,20 +523,20 @@ fn run() -> Result<()> {
             print_json(&memory.gate_threshold(max_false_block)?)?;
         }
         Command::GateExplain { batch } => {
-            let (engine, threshold) = hook_settings();
+            let (engine, settings) = hook_settings();
             if batch {
                 explain_batch(
                     io::stdin().lock(),
                     io::stdout().lock(),
                     engine.as_deref(),
-                    threshold,
+                    settings,
                 )?;
             } else {
                 // Same lenient parsing as `hook` (lone surrogates, trailing data, invalid UTF-8).
                 print_json(&explain_stop_event(
                     io::stdin().lock(),
                     engine.as_deref(),
-                    threshold,
+                    settings,
                 )?)?;
             }
         }

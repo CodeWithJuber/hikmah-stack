@@ -65,6 +65,9 @@ TYPESAFE_API_KEY=... hikmah decide --frame examples/decision-frame.json --engine
 # a block when P(the claim would fail verification) >= threshold. Engine problems leave the rules.
 HIKMAH_HOOK_ENGINE=jev TYPESAFE_API_KEY=... hikmah hook < stop-event.json
 
+# Opt in to letting a confident engine answer (p < 0.1 here) lift a rules block. Off by default.
+HIKMAH_HOOK_ENGINE=jev HIKMAH_HOOK_ENGINE_LIFT=0.1 TYPESAFE_API_KEY=... hikmah hook < stop-event.json
+
 # Same code path, explained: rules verdict, engine probability, threshold, and which path decided.
 # stdin is parsed exactly like the hook's (lone surrogates, trailing data, invalid UTF-8); when the
 # hook would allow without judging (for example stop_hook_active), `skipped` says why.
@@ -89,6 +92,7 @@ Environment:
 | `HIKMAH_JEV_TIMEOUT_MS` | 5000 | Total time budget including retries, clamped to 100 ms..=60 s. The hook always caps it at 3000. |
 | `HIKMAH_HOOK_ENGINE` | unset (rules) | `jev` turns on engine mode in `hikmah hook`. |
 | `HIKMAH_HOOK_THRESHOLD` | 0.6 | The engine adds a block when `P(the completion claim would fail verification)` is at or above this value. Chosen and confirmed in harness-bench (see below). |
+| `HIKMAH_HOOK_ENGINE_LIFT` | unset (rules are a hard floor) | Opt-in. When the engine's admitted answer has `p` below this value, a rules block is lifted. An engine block is never lifted, so a value at or above the threshold acts like the threshold. An unset, unparsable, or out-of-range value means no lift. No measurement backs any value; see [the limits](#truth-gate-engine-lift-opt-in). |
 | `HIKMAH_HOOK_RECORD` | unset | A memory store path. When set and the engine answered, `hikmah hook` appends that answer there as a `prediction` trace after writing its verdict. Recording failures never change the verdict or exit code. |
 
 ## Decision frames with engine estimates
@@ -145,7 +149,7 @@ harness-bench (a separate repository) measures the gate on real agent finish mes
 - **The rules alone** almost never fire on these messages. False completions do not say TODO; they claim success.
 - **The first engine question** asked whether the message admits unfinished work. It caught 8.5% of false completions.
 - **The current question** asks whether a test run would show the task is not done. On run 1's held-out split (600 messages) it caught 16.3% with a 7.9% false-block rate at the 0.60 threshold, and its probabilities were well calibrated (ECE 0.05).
-- **Threshold and combination.** The threshold was chosen on a separate dev set. The rules stay a hard floor: the engine can add a block but never remove one.
+- **Threshold and combination.** The threshold was chosen on a separate dev set. By default the rules stay a hard floor: the engine can add a block but never remove one. The numbers here were measured that way.
 
 **Run 2 confirmed it on fresh data.** Run 2 used 900 new held-out messages, from tasks and row groups not used in run 1, with every threshold fixed in advance:
 
@@ -179,6 +183,15 @@ It refuses with fewer than 50 resolved predictions, or when either class is abse
 Limits:
 
 - This covers the engine path only. The rules still block on their own, so the gate's overall false-block rate can be higher by the rules' own false blocks.
+
+### Truth Gate engine lift (opt-in)
+
+The deterministic rules match words, not meaning, so they can block an honest message ("Implemented the finder; tests are still running and I'll share the results later"). By default an engine cannot overrule them. `HIKMAH_HOOK_ENGINE_LIFT=<p>` changes that: when the engine answers and its admitted `P(the completion claim would fail verification)` is below `p`, a rules block is lifted. `hikmah gate-explain` reports `lift` and `lifted`.
+
+- **Only an admitted answer lifts.** An engine failure, timeout, abstention, or rejected response leaves the rules block in place.
+- **Engine blocks are never lifted.** `block = engine_block || (rules_block && !lifted)`.
+- **Not measured.** harness-bench measured the rules as a hard floor, so no lift value has evidence behind it. In run 2 the rules alone blocked 0.4% of false completions and 0.9% of true ones, which bounds how much a lift could have changed there. Choose a value only from your own recorded outcomes (`HIKMAH_HOOK_RECORD` records every engine answer, lifted or not).
+- **Not a policy-file setting.** The hook never reads the kernel policy file, so a bad policy file cannot break it. The lift is set only by this environment variable, next to the other hook settings.
 - The threshold is chosen on the same data it is reported on, so its false-block rate is optimistic. Check it again on outcomes recorded afterwards.
 - `hikmah calibration --family truth_gate.false_completion.v2` reports calibration for the same predictions.
 

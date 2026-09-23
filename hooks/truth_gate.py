@@ -11,8 +11,8 @@ just before a word cancels it, and fenced or inline code is ignored. A word that
 not a marker ("the TODO list widget", "a Coming soon badge", "the search input placeholder", a
 quoted "TODO"), unless the clause says a task marker is still open ("one TODO comment is left").
 A promise whose clause leaves it to the user ("If you want, I'll ...", "Once you approve, we
-will ...") is an offer, not deferred work. Engine mode exists only in Rust; this fallback is
-rules only. Text is normalized the same
+will ...") is an offer, not deferred work. Engine mode, including the opt-in engine lift, exists
+only in Rust; this fallback is rules only. Text is normalized the same
 way as in Rust (NFC, curly apostrophes, zero-width characters removed, whitespace other than
 newline mapped to a space) and word boundaries are ASCII, so both implementations agree.
 Malformed payloads (lone surrogate escapes, trailing data, out-of-range numbers) go through the

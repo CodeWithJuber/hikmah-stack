@@ -22,9 +22,11 @@
 //!
 //! Optional engine mode: a typed decision engine (for example Jev) estimates the probability that
 //! the completion claim would fail verification (a test run of the requested change). The gate
-//! blocks when the rules block **or** `p >= threshold`: the deterministic rules are a hard floor an
-//! engine cannot lift, and the engine can only add blocks. Any engine failure, abstention, or
-//! rejected response leaves the rules' verdict in place.
+//! blocks when the rules block **or** `p >= threshold`. By default the deterministic rules are a
+//! hard floor an engine cannot lift, and the engine can only add blocks. Opting in with a lift
+//! value (`GateSettings::lift`, `HIKMAH_HOOK_ENGINE_LIFT`) lets an admitted engine answer with
+//! `p < lift` remove a rules block; nothing removes an engine block. Any engine failure,
+//! abstention, or rejected response leaves the rules' verdict in place.
 //!
 //! Why this question and threshold: on 600 held-out real agent "done" messages (harness-bench
 //! run 1), the rules caught 1 of 295 false completions, the previous engine question ("does the
@@ -420,6 +422,27 @@ pub fn false_completion_request(message: &str) -> Option<DecisionRequest> {
     .ok()
 }
 
+/// How the Truth Gate combines its rules with an engine's answer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GateSettings {
+    /// The engine adds a block when `p >= threshold`.
+    pub threshold: f64,
+    /// Opt-in (`HIKMAH_HOOK_ENGINE_LIFT`): an admitted engine answer with `p < lift` lifts a rules
+    /// block. `None`, the default, keeps the rules a hard floor. It never lifts an engine block, so
+    /// a value at or above `threshold` acts like `threshold`. No measurement backs any value yet.
+    pub lift: Option<f64>,
+}
+
+impl From<f64> for GateSettings {
+    /// A threshold alone: the rules stay a hard floor.
+    fn from(threshold: f64) -> Self {
+        Self {
+            threshold,
+            lift: None,
+        }
+    }
+}
+
 /// Rules-only Stop hook (the default).
 pub fn run_stop_hook(input: impl Read, output: impl Write) -> Result<()> {
     run_stop_hook_with(input, output, None, DEFAULT_ENGINE_THRESHOLD)
@@ -459,13 +482,13 @@ fn read_stop_event(
 fn judge_stop_event(
     input: impl Read,
     engine: Option<&dyn DecisionEngine>,
-    threshold: f64,
+    settings: GateSettings,
 ) -> Result<(GateVerdict, Option<String>)> {
     let (message, session) = read_stop_event(input)?;
     let verdict = match message {
-        Ok(message) => evaluate_message(&message, engine, threshold),
+        Ok(message) => evaluate_message(&message, engine, settings),
         Err(why) => {
-            let mut verdict = evaluate_message("", None, threshold);
+            let mut verdict = evaluate_message("", None, settings);
             verdict.skipped = Some(why.to_string());
             verdict
         }
@@ -478,9 +501,9 @@ pub fn run_stop_hook_with(
     input: impl Read,
     output: impl Write,
     engine: Option<&dyn DecisionEngine>,
-    threshold: f64,
+    settings: impl Into<GateSettings>,
 ) -> Result<()> {
-    run_stop_hook_recording(input, output, engine, threshold, None)
+    run_stop_hook_recording(input, output, engine, settings, None)
 }
 
 /// Stop hook that can also record the engine's answer. When `record` names a memory store and
@@ -491,10 +514,10 @@ pub fn run_stop_hook_recording(
     input: impl Read,
     mut output: impl Write,
     engine: Option<&dyn DecisionEngine>,
-    threshold: f64,
+    settings: impl Into<GateSettings>,
     record: Option<&Path>,
 ) -> Result<()> {
-    let (verdict, session) = judge_stop_event(input, engine, threshold)?;
+    let (verdict, session) = judge_stop_event(input, engine, settings.into())?;
     match &verdict.reason {
         Some(reason) if verdict.block => {
             writeln!(output, "{}", json!({"decision": "block", "reason": reason}))?
@@ -530,9 +553,9 @@ fn record_prediction(store: &Path, verdict: &GateVerdict, session: Option<&str>)
 pub fn explain_stop_event(
     input: impl Read,
     engine: Option<&dyn DecisionEngine>,
-    threshold: f64,
+    settings: impl Into<GateSettings>,
 ) -> Result<GateVerdict> {
-    Ok(judge_stop_event(input, engine, threshold)?.0)
+    Ok(judge_stop_event(input, engine, settings.into())?.0)
 }
 
 /// Which path produced a Truth Gate verdict.
@@ -559,6 +582,10 @@ pub struct GateVerdict {
     /// Whether the engine alone would block (`p >= threshold`), when it answered.
     pub engine_block: Option<bool>,
     pub threshold: f64,
+    /// The opted-in lift value, if any (see [`GateSettings::lift`]).
+    pub lift: Option<f64>,
+    /// Whether an engine answer below `lift` lifted a rules block.
+    pub lifted: bool,
     pub engine: Option<String>,
     /// Why the engine gave no probability (failure, abstention, or rejection), if it did not.
     pub engine_note: Option<String>,
@@ -578,8 +605,9 @@ pub struct GateVerdict {
 pub fn evaluate_message(
     message: &str,
     engine: Option<&dyn DecisionEngine>,
-    threshold: f64,
+    settings: impl Into<GateSettings>,
 ) -> GateVerdict {
+    let GateSettings { threshold, lift } = settings.into();
     let rules_block = rules_verdict(message);
     let mut verdict = GateVerdict {
         block: rules_block,
@@ -588,6 +616,8 @@ pub fn evaluate_message(
         p: None,
         engine_block: None,
         threshold,
+        lift,
+        lifted: false,
         engine: None,
         engine_note: None,
         engine_latency_ms: None,
@@ -617,8 +647,15 @@ pub fn evaluate_message(
                     verdict.p = Some(p);
                     verdict.engine_block = Some(engine_block);
                     verdict.prediction = decision.prediction_traces(&request).into_iter().next();
-                    // The rules are a hard floor: the engine can add a block, never remove one.
-                    verdict.block = rules_block || engine_block;
+                    // By default the rules are a hard floor: the engine can add a block, never
+                    // remove one. Only an opted-in lift lets a confident "the claim holds" answer
+                    // remove a rules block, and nothing removes an engine block.
+                    let lifted = rules_block && !engine_block && lift.is_some_and(|lift| p < lift);
+                    verdict.lifted = lifted;
+                    verdict.block = engine_block || (rules_block && !lifted);
+                    if lifted {
+                        verdict.reason = None;
+                    }
                     if !rules_block && engine_block {
                         verdict.reason = Some(format!(
                             "Hikmah Truth Gate ({} p={p:.2}): this completion claim looks likely to fail verification. Run the tests for the change, or say plainly what is unverified or unfinished.",
@@ -648,8 +685,9 @@ pub fn explain_batch(
     input: impl BufRead,
     mut output: impl Write,
     engine: Option<&dyn DecisionEngine>,
-    threshold: f64,
+    settings: impl Into<GateSettings>,
 ) -> Result<()> {
+    let settings = settings.into();
     for line in input.lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -661,7 +699,7 @@ pub fn explain_batch(
             .get("last_assistant_message")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let verdict = evaluate_message(message, engine, threshold);
+        let verdict = evaluate_message(message, engine, settings);
         let mut row = serde_json::to_value(&verdict)?;
         row["id"] = id;
         writeln!(output, "{row}")?;
@@ -713,7 +751,10 @@ mod tests {
         assert_eq!(verdict.path, GatePath::Engine);
         assert_eq!(verdict.p, Some(0.3));
         assert_eq!(verdict.engine_block, Some(false));
-        assert!(verdict.block, "a low engine p cannot lift a rules block");
+        assert!(
+            verdict.block && !verdict.lifted,
+            "without the opt-in, a low engine p cannot lift a rules block"
+        );
         assert_eq!(verdict.reason.as_deref(), Some(BLOCK_REASON));
 
         let high = StaticEngine {
@@ -736,6 +777,54 @@ mod tests {
         let fallback = evaluate_message(message, Some(&failing), 0.8);
         assert_eq!(fallback.path, GatePath::RulesFallback);
         assert!(fallback.block && fallback.engine_note.is_some());
+    }
+
+    #[test]
+    fn an_opted_in_lift_removes_only_a_rules_block() {
+        use crate::decision_port::{EngineDescriptor, RawAnswer, StaticEngine};
+        let engine = |p: f64| StaticEngine {
+            descriptor: EngineDescriptor {
+                name: "static".into(),
+                version: "1".into(),
+            },
+            answers: [("false_completion".to_string(), RawAnswer::Noul { noul: p })]
+                .into_iter()
+                .collect(),
+        };
+        let lift = GateSettings {
+            threshold: 0.6,
+            lift: Some(0.2),
+        };
+        let rules_block = "Done. TODO: add tests";
+
+        // Without the opt-in, a low p never lifts the rules (the default is unchanged).
+        let floor = evaluate_message(rules_block, Some(&engine(0.05)), 0.6);
+        assert!(floor.block && !floor.lifted && floor.lift.is_none());
+
+        // With it, an admitted answer below the lift value lifts the rules block...
+        let lifted = evaluate_message(rules_block, Some(&engine(0.05)), lift);
+        assert!(!lifted.block && lifted.lifted && lifted.rules_block);
+        assert_eq!(lifted.path, GatePath::Engine);
+        assert!(lifted.reason.is_none());
+        // ...an answer at or above it does not...
+        let kept = evaluate_message(rules_block, Some(&engine(0.2)), lift);
+        assert!(kept.block && !kept.lifted);
+        assert_eq!(kept.reason.as_deref(), Some(BLOCK_REASON));
+        // ...and a lift value above the threshold never lifts an engine block.
+        let high_lift = GateSettings {
+            threshold: 0.6,
+            lift: Some(0.9),
+        };
+        let engine_block = evaluate_message(rules_block, Some(&engine(0.7)), high_lift);
+        assert!(engine_block.block && !engine_block.lifted);
+        let clean = "Fixed the parser and everything works now.";
+        assert!(evaluate_message(clean, Some(&engine(0.7)), high_lift).block);
+
+        // No answer means no lift: engine failure or abstention leaves the rules.
+        let failed = evaluate_message(rules_block, Some(&crate::decision_port::NoEngine), lift);
+        assert!(failed.block && !failed.lifted);
+        assert_eq!(failed.path, GatePath::RulesFallback);
+        assert!(evaluate_message(rules_block, None, lift).block);
     }
 
     #[test]
