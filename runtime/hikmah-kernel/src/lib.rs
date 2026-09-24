@@ -13,6 +13,7 @@ pub mod ledger;
 pub mod model_port;
 pub mod planner;
 pub mod policy;
+pub mod principal;
 pub mod prospective;
 pub mod recall;
 pub mod secrets;

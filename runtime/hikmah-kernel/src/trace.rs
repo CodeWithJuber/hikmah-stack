@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{KernelError, Result};
+use crate::principal::AGENT_LOCATOR_PREFIX;
 use crate::secrets::contains_secret;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -207,6 +208,15 @@ impl Trace {
             .starts_with(MODEL_SOURCE_PREFIX)
     }
 
+    /// True when the trace was written from a detected AI agent session (see
+    /// [`crate::principal`]). `source` stays whatever the caller claimed.
+    pub fn is_from_agent_session(&self) -> bool {
+        self.provenance
+            .locator
+            .as_deref()
+            .is_some_and(|locator| locator.trim_start().starts_with(AGENT_LOCATOR_PREFIX))
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.content.trim().is_empty() {
             return Err(KernelError::Invalid("trace content cannot be empty".into()));
@@ -240,6 +250,12 @@ impl Trace {
         if self.is_model_authored() && self.provenance.verified {
             return Err(KernelError::Invalid(
                 "model-authored traces cannot be marked verified; record an outcome from a non-model principal instead"
+                    .into(),
+            ));
+        }
+        if self.provenance.verified && self.is_from_agent_session() {
+            return Err(KernelError::Invalid(
+                "a trace written from an AI agent session cannot be marked verified; a person must attest it from outside the agent session"
                     .into(),
             ));
         }

@@ -1,12 +1,13 @@
 //! Calibration earned from outcomes.
 //!
-//! Pairs every recorded `Prediction` trace with the latest *active* `Outcome` trace that resolves
-//! it (written by a non-model principal; purged or superseded outcomes do not count) and reports,
-//! per forecaster (an engine such as `jev@jev-1.13.0`, or a person or agent such as
-//! `human:alex`) and question family: Brier score, expected calibration error over 5
-//! equal-width bins, accuracy or base rate, and how many predictions carried no probability at
-//! all. Rows are ordered by family, then answer kind, then forecaster, so every forecaster's row
-//! for one family sits next to the others.
+//! Pairs every *active* `Prediction` trace (a purged or superseded prediction was retracted and
+//! does not count) with the latest *active* `Outcome` trace that resolves it (written by a
+//! non-model principal; purged or superseded outcomes do not count) and reports, per forecaster
+//! (an engine such as `jev@jev-1.13.0`, or a person or agent such as `human:alex`) and question
+//! family: Brier score, expected calibration error over 5 equal-width bins, accuracy or base
+//! rate, and how many predictions carried no probability at all. Rows are ordered by family,
+//! then answer kind, then forecaster, so every forecaster's row for one family sits next to the
+//! others.
 //!
 //! A forecaster is its class and its name. The class comes from the trace's source, not from
 //! the name it records: `engine` for a `model:` source, `principal` for anyone else
@@ -200,6 +201,11 @@ impl MemoryStore {
         let mut groups: BTreeMap<Key, (Vec<Pair>, usize)> = BTreeMap::new();
         let mut unresolved = 0;
         for entry in self.all() {
+            // A purged or superseded prediction was retracted: it must not count toward the
+            // metrics or the unresolved total (the same rule as `gate_threshold`).
+            if entry.status != TraceStatus::Active {
+                continue;
+            }
             let trace = &entry.trace;
             let Some(prediction) = &trace.prediction else {
                 continue;

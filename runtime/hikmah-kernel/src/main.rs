@@ -9,6 +9,7 @@ use hikmah_kernel::hook::{
 };
 use hikmah_kernel::planner::{plan, PlanProblem};
 use hikmah_kernel::policy::KernelPolicy;
+use hikmah_kernel::principal;
 use hikmah_kernel::recall::RecallQuery;
 use hikmah_kernel::trace::{parse_deadline, OutcomeRecord, PrivacyClass, Trace, TraceKind};
 use hikmah_kernel::validate::validate_repo;
@@ -52,7 +53,9 @@ enum Command {
         kind: String,
         #[arg(long)]
         content: String,
-        /// Who wrote this. Use `model:<engine>` for model output; model traces are never verified.
+        /// Who wrote this, as claimed by the caller (not authenticated). Use `model:<engine>` for
+        /// model output; model traces are never verified. Inside a detected AI agent session the
+        /// locator records `agent-session:<host>:<id>`.
         #[arg(long, default_value = "unknown")]
         source: String,
         #[arg(long)]
@@ -76,6 +79,9 @@ enum Command {
         /// Deadline for commitments: epoch milliseconds, `YYYY-MM-DD[THH:MM[:SS]]` (UTC), or `+<n>h` / `+<n>d`.
         #[arg(long)]
         deadline: Option<String>,
+        /// A person checked this claim. Refused inside a detected AI agent session (`CLAUDECODE`,
+        /// `CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_*`, `GEMINI_CLI`, `AI_AGENT`): run it from your own
+        /// terminal.
         #[arg(long)]
         verified: bool,
     },
@@ -127,16 +133,26 @@ enum Command {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
     },
-    /// Verify the hash chain, the head file, and (optionally) a pinned head hash.
+    /// Verify the hash chain, the head file, and (optionally) a pinned head hash. Records past
+    /// the head that no hikmah write acknowledged are listed under `unacknowledged`.
     VerifyLedger {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
+        /// Fail unless the latest record hash equals this value (kept somewhere the writer cannot
+        /// reach, such as CI or git). Only checked by a plain verification, so it cannot be
+        /// combined with `--accept-tail` or `--reset-head`.
         #[arg(long)]
         expect_head: Option<String>,
         /// Accept the current ledger as the new head after a deliberate repair (writes are
-        /// refused while the ledger and its head file disagree).
-        #[arg(long)]
+        /// refused while the ledger and its head file disagree). A person's decision: refused
+        /// inside a detected AI agent session.
+        #[arg(long, conflicts_with_all = ["accept_tail", "expect_head"])]
         reset_head: bool,
+        /// Acknowledge records appended after the head file, after inspecting them: prints them
+        /// and moves the head to the end. Refuses if earlier records were removed or rewritten.
+        /// A person's decision: refused inside a detected AI agent session.
+        #[arg(long, conflicts_with = "expect_head")]
+        accept_tail: bool,
     },
     Plan {
         #[arg(long)]
@@ -183,7 +199,8 @@ enum Command {
         store: PathBuf,
     },
     /// Record a person's or agent's forecast as a `prediction` trace, so `calibration` scores it
-    /// beside any engine on the same family. It is never verified; `outcome` resolves it.
+    /// beside any engine on the same family. It is never verified; `outcome` resolves it. Inside a
+    /// detected AI agent session the locator records `agent-session:<host>:<id>`.
     Predict {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
@@ -214,7 +231,8 @@ enum Command {
         #[arg(long)]
         locator: Option<String>,
     },
-    /// Record the observed outcome of a prediction (from a non-model principal).
+    /// Record the observed outcome of a prediction (from a non-model principal). Inside a
+    /// detected AI agent session the locator records `agent-session:<host>:<id>`.
     Outcome {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
@@ -384,7 +402,6 @@ fn run() -> Result<()> {
             deadline,
             verified,
         } => {
-            let mut memory = MemoryStore::open(store, policy()?)?;
             let mut trace = Trace::new(TraceKind::from_str(&kind)?, content, source);
             if trace.kind == TraceKind::Prediction {
                 return Err(KernelError::Invalid(
@@ -404,6 +421,11 @@ fn run() -> Result<()> {
             if let Some(deadline) = deadline {
                 trace.deadline_ms = Some(parse_deadline(&deadline, trace.created_at_ms)?);
             }
+            // Before the store is opened, so a refused write creates nothing.
+            if let Some(agent) = principal::detect_from_env() {
+                agent.stamp(&mut trace)?;
+            }
+            let mut memory = MemoryStore::open(store, policy()?)?;
             let (trace, conflicts) = memory.remember(trace)?;
             print_json(&json!({"trace": trace, "conflicts": conflicts}))?;
         }
@@ -459,8 +481,31 @@ fn run() -> Result<()> {
             store,
             expect_head,
             reset_head,
+            accept_tail,
         } => {
+            // Before the store is opened, so a refused acceptance touches nothing. Both flags
+            // accept records no hikmah write acknowledged, which may be a forged append.
+            if accept_tail || reset_head {
+                if let Some(agent) = principal::detect_from_env() {
+                    let (command, why) = if accept_tail {
+                        (
+                            "hikmah verify-ledger --accept-tail",
+                            "it approves ledger records that no hikmah write acknowledged, and such a record may be a forged append",
+                        )
+                    } else {
+                        (
+                            "hikmah verify-ledger --reset-head",
+                            "it accepts the ledger as it is now, including records that were removed, rewritten, or appended without a hikmah write",
+                        )
+                    };
+                    return Err(agent.refuse_person_only(command, why));
+                }
+            }
             let mut memory = MemoryStore::open_existing(store, policy()?)?;
+            if accept_tail {
+                print_json(&memory.accept_tail()?)?;
+                return Ok(());
+            }
             if reset_head {
                 let head = memory.reset_head()?;
                 print_json(&json!({"head_reset": head}))?;
@@ -559,7 +604,7 @@ fn run() -> Result<()> {
             source,
             locator,
         } => {
-            let trace = Forecast {
+            let mut trace = Forecast {
                 family,
                 question,
                 kind,
@@ -570,6 +615,10 @@ fn run() -> Result<()> {
                 locator,
             }
             .into_trace()?;
+            // Before the store is opened, so a refused write creates nothing.
+            if let Some(agent) = principal::detect_from_env() {
+                agent.stamp(&mut trace)?;
+            }
             let mut memory = MemoryStore::open(store, policy()?)?;
             let (trace, _) = memory.remember(trace)?;
             print_json(&trace)?;
@@ -581,13 +630,16 @@ fn run() -> Result<()> {
             source,
             note,
         } => {
-            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             let content = note.unwrap_or_else(|| format!("Outcome for {prediction}: {observed}"));
             let mut trace = Trace::new(TraceKind::Outcome, content, source);
             trace.outcome = Some(OutcomeRecord {
                 prediction_id: prediction,
                 observed,
             });
+            if let Some(agent) = principal::detect_from_env() {
+                agent.stamp(&mut trace)?;
+            }
+            let mut memory = MemoryStore::open_existing(store, policy()?)?;
             let (trace, _) = memory.remember(trace)?;
             print_json(&trace)?;
         }
