@@ -29,7 +29,7 @@ Fixes for gaps found by the research-to-implementation audit.
 
 ### Provenance
 - **An agent can no longer verify its own memory by default.** `--source` and `--verified` were accepted as given, so an agent could write `--source human:<name> --verified`. New `principal` module: when a coding-agent host's variables are present (`CLAUDECODE`, `CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_*`, `GEMINI_CLI`, `AI_AGENT`; empty values and common configuration settings such as `CODEX_HOME` and `CLAUDE_CODE_USE_BEDROCK` do not count), the CLI does the following:
-  - `remember` and `outcome` record the locator `agent-session:<host>:<session id>`. A caller `--locator` is kept after it, and the session id is sanitized and capped at 64 characters.
+  - `remember`, `predict`, and `outcome` record the locator `agent-session:<host>:<session id>`. A caller `--locator` is kept after it, and the session id is sanitized and capped at 64 characters.
   - `remember --verified` is refused before the store is opened. The error explains that a person must attest, from their own terminal, by superseding the trace with a verified correction.
   - `verify-ledger --accept-tail` and `--reset-head` are refused before the store is opened. The error tells the agent to stop and ask a person, and names no way around the check.
   - Refusals name the detected variables (at most five) and point a person whose own shell was mistaken for an agent to "Agent sessions" in `docs/MEMORY.md`. More documented Claude Code settings do not count as markers, such as `CLAUDE_CODE_ENABLE_TELEMETRY`, `CLAUDE_CODE_USE_FOUNDRY`, and `CLAUDE_CODE_OAUTH_TOKEN`.
@@ -43,10 +43,29 @@ Fixes for gaps found by the research-to-implementation audit.
   - **Unchanged behaviour.** Hard blocks still rank last. The reversibility preference now compares lower bounds.
   - **Reference fields.** `raw_score` and `confidence_adjusted_score` are still reported but no longer order the ranking.
   - **Effect.** An option with one criterion scored 1.0 and three unknown (interval [0.25, 1.0]) used to outrank an option scored 0.6 on all four. It no longer does, and the result is marked not decisive.
+- **`decide --engine` records its estimates and stops asking about blocked options.**
+  - **Recording.** New `--record` and `--store` store every admitted estimate as an unverified `prediction` trace (family `decide.<criterion id>`), so engine estimates for decisions can finally be calibrated. All traces go into the ledger in one batch through the new `MemoryStore::remember_many`: every trace is written or none is. `--record` without an engine is refused.
+  - **No questions about blocked options.** An option with a hard block can never be recommended, so its missing criteria are no longer sent; it is listed in `skipped_blocked`. For example, a frame whose blocked option was missing all three criteria used to spend 3 of its 5 estimates on that option.
+  - **One request.** Every other estimate shares one engine request with question ids `o{option}_c{criterion}`, split only where a request would pass 32 questions or 32,000 characters of state. Before, `decide` made one request per option, in sequence. `engine_requests` reports how many were sent. The frame is validated before anything is sent.
+  - **A failure now costs the whole request.** Admission is all or nothing per request, so one malformed or out-of-range answer about one option now leaves every estimate in that request unscored, not only that option's. A timeout does the same, and up to 32 questions now share one engine time budget (`HIKMAH_JEV_TIMEOUT_MS`, default 5000 ms) where each option had its own; raise it for large frames. Unscored criteria stay unknown, as without an engine.
+  - The estimation moved from the CLI into the library (`decision::estimate_missing_criteria`) and is tested offline with a mock engine. Each estimate now also carries its `question_id`, and the engine name even when it abstained.
+  - `ask --record` also writes its predictions in one batch now.
 
 ### Calibration
 - **Retracted predictions no longer count.** `hikmah calibration` iterated every prediction regardless of status, so a purged prediction still moved Brier, ECE, Z, and the `unresolved_predictions` count (`gate-threshold` already skipped it). Only active predictions count now. An `outcome` for a purged or superseded prediction is refused, both in `remember` and again under the writer lock. Regression tests: `purged_predictions_do_not_steer_calibration`, and `an_outcome_for_a_prediction_purged_by_another_process_is_refused` for the check under the lock (two handles on one store).
 - **`calibrated` now needs statistical support, not just 50 outcomes.** 50 resolved predictions make a family `measurable` (new field). It is `calibrated` only if Spiegelhalter's Z test does not reject calibration at alpha = 0.05 and the Brier skill over the base-rate predictor is positive. Choice and score families use the top-label probability and correctness for both checks. New per-family fields: `z`, `p_value` (normal approximation), `brier_skill`. Previously 50 predictions at p = 0.95 that were all wrong were reported `calibrated: true`; they are now `measurable: true, calibrated: false`. Formulas are in `docs/DECISION_PORT.md`.
+- **People and agents can record forecasts.** New `hikmah predict --family F --question Q --type noul|choice|score --p P [--value V] [--answer-space A,B] --source human:<name> [--locator L]` stores a `prediction` trace whose forecaster is its source. `hikmah calibration` scores it next to any engine on the same family, so a person's Brier and Jev's can be compared.
+  - **Invariant change.** A prediction no longer needs a `model:` source. Instead no prediction can be marked verified, whatever its source, and the record's forecaster must match its source (`model:jev@…` records `jev@…`, `human:alex` records `human:alex`). Choice and score forecasts carry only `P(value)`; the rest of the distribution is not invented.
+  - **Neither class can write the other's calibration row.** A matching name is not enough on its own, because a person could record under the source `jev@jev-1.13.0` and carry the engine's exact name. Calibration therefore keys every family and pooled row by the source's class as well as its name, in a new `forecaster_kind` field (`engine` for a `model:` source, `principal` otherwise), so such a forecast gets a row of its own. `predict` also refuses `model:` and `unknown` sources and any source that is not `<kind>:<name>` (for example `human:alex` or `agent:planner`).
+  - **Engine versions are trimmed once.** A prediction's source and its record's engine now come from one trimmed `name@version` (`EngineDescriptor::identity`). The forecaster check compares the two, so a version reported with trailing whitespace would otherwise have made every `ask --record`, `decide --record`, and hook recording fail.
+  - The prediction record's family, value, and answer space are now also checked for credentials.
+  - `hikmah remember --kind prediction` now points to `predict` as well as `ask --record` and `decide --record`.
+- **The measurable minimum is a policy field, and small families are labelled instead of left unjudged.**
+  - New policy field `calibration_min_outcomes` (default 50, unchanged; at least 1). The report's `min_outcomes` shows the value in effect. It sets when a row is `measurable`. `calibrated` keeps a floor of 50 outcomes in code, as it does the Z test's 1.96: a policy can raise the floor but not lower it, so no configuration lets the Z test certify a handful of outcomes.
+  - New per-row `evidence`: `anecdotal` below the minimum, `measurable` from it. The Brier was already printed, but nothing said it was anecdotal.
+  - New per-row `top_label_brier`: the binary Brier of the probability the verdict tests (equal to `brier` for noul), comparable across forecasters and answer kinds.
+  - New `hikmah calibration --family-prefix <prefix>`: every family under the prefix plus `pooled`, one row per forecaster over all of them in the top-label view, with `pooled_families`. `--family` and `--family-prefix` cannot be combined.
+  - Rows are now ordered by family, then answer kind, then forecaster (before: forecaster first), so every forecaster's row for one family is adjacent.
 
 ### Truth Gate
 - **`gate-explain` parses stdin like the hook.** Without `--batch` it used a strict JSON parse, so a payload with a lone surrogate escape was blocked by `hook` but reported `block: false` by `gate-explain`. Both now share `explain_stop_event`. When the hook would allow without judging (`stop_hook_active`, no message, not an object), `gate-explain` reports that in a new `skipped` field instead of judging anyway.
@@ -61,6 +80,7 @@ Fixes for gaps found by the research-to-implementation audit.
 
   Recording failures and panics are swallowed and never change the verdict, output, or exit code.
 - **New `hikmah gate-threshold [--max-false-block 0.10]`.** It pairs those predictions with outcomes (`hikmah outcome --observed true` means the claim was a false completion). It reports the threshold with the highest recall whose empirical false-block rate is within the budget (ties go to the higher threshold), with `n`, recall, false-block rate, a Wilson 95% interval for the false-block rate, and the rates at the 0.6 default. It refuses below 50 resolved predictions or without both classes. This covers the engine path only, and the rates are in-sample.
+- `gate-threshold` counts only engine predictions (`model:` sources). A person's forecast recorded with `hikmah predict` in the gate family no longer steers the engine's threshold.
 
 ### Policy
 - **The kernel policy is configurable from the CLI.** Before, every CLI command used `KernelPolicy::default()`.
@@ -76,6 +96,7 @@ Fixes for gaps found by the research-to-implementation audit.
   - the 30-day recency scale and the 0.65 unverified factor;
   - the 7-day commitment scale, the 0.35 undated urgency, the 0.15 overdue floor, and the 0.5 listing scale.
 - `docs/MEMORY.md` now shows the recall formula the code actually uses (it still showed the 3.0.0 additive sum).
+- The README said limits, thresholds, and every recall weight are policy fields. It now says which are (memory limits, recall and consolidation thresholds, recall weights, and `calibration_min_outcomes`) and that the decision, council, and statistical constants are code.
 
 ### Docs
 - `COGNITIVE_KERNEL.md` said the deliberation lanes run concurrently. They run sequentially and deterministically over caller-supplied counts, as the 3.1.0 notes already said. It and `CO_MODEL.md` now say "independent, not concurrent".

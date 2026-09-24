@@ -290,6 +290,43 @@ fn the_cli_stamps_outcomes_recorded_from_an_agent_session() {
 }
 
 #[test]
+fn the_cli_stamps_forecasts_recorded_from_an_agent_session() {
+    let path = temp_store("agent-predict");
+    let output = hikmah(
+        &[
+            "predict",
+            "--store",
+            path.to_str().unwrap(),
+            "--family",
+            "site.hero.ctr",
+            "--question",
+            "Will the new hero raise click-through?",
+            "--type",
+            "noul",
+            "--p",
+            "0.7",
+            "--source",
+            "agent:planner",
+            "--locator",
+            "DECISIONS.md#hero",
+        ],
+        &[("CODEX_SANDBOX", "seatbelt"), ("CODEX_THREAD_ID", "run-8")],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let forecast: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        forecast["provenance"]["locator"],
+        "agent-session:codex:run-8; DECISIONS.md#hero"
+    );
+    assert_eq!(forecast["provenance"]["verified"], false);
+    assert_eq!(forecast["prediction"]["engine"], "agent:planner");
+}
+
+#[test]
 fn accepting_unacknowledged_records_is_left_to_a_person() {
     let message = session()
         .refuse_person_only(

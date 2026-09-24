@@ -101,17 +101,18 @@ Before durable memory writes:
 - keep source/authority separate from confidence;
 - do not auto-promote model output into belief;
 - quarantine contradictory or suspicious claims rather than overwriting;
-- never persist secrets merely because they appeared in conversation (`remember` and every other write refuse a trace whose content, tags, claim key or value, source, or locator matches the credential detector in `secrets.rs`; it recognizes well-known credential shapes such as tokens, keys, `KEY=value` assignments, and passwords in URLs, and is not a DLP system);
+- never persist secrets merely because they appeared in conversation (`remember` and every other write refuse a trace whose content, tags, claim key or value, source, locator, or prediction family, value, or answer space matches the credential detector in `secrets.rs`; it recognizes well-known credential shapes such as tokens, keys, `KEY=value` assignments, and passwords in URLs, and is not a DLP system);
 - scope preferences to the person/project/context that supplied them;
 - attach outcomes to prior actions so failed plans do not become success-pattern memories (`hikmah outcome` links an observed outcome to a recorded prediction);
 - never let model output verify itself: `model:` sources cannot be verified, cannot supersede, and cannot resolve predictions;
 - treat `source` and `verified` as the writer's claims. The kernel does not authenticate principals, so a writer could label itself `human:<name>`. Inside a detected AI agent session the CLI stamps writes and refuses self-verification (see "Agent sessions" below).
+- treat a forecast as a forecast, whoever made it: a person's or agent's forecast (`hikmah predict`) is a `prediction` trace too, never verified, and resolved only by an outcome.
 
 ## Agent sessions
 
 `principal.rs` detects a coding-agent session from the variables its host sets: `CLAUDECODE`, `CLAUDE_CODE_*`, `CODEX_*`, `CURSOR_*`, `GEMINI_CLI`, or `AI_AGENT`, with a non-empty value. Documented configuration settings a person exports in their own profile (for example `CODEX_HOME`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_ENABLE_TELEMETRY`, `CLAUDE_CODE_OAUTH_TOKEN`) do not count. Inside such a session the CLI:
 
-- stamps `remember` and `outcome` with the locator `agent-session:<host>:<session id>`, keeping a caller `--locator` after it;
+- stamps `remember`, `predict`, and `outcome` with the locator `agent-session:<host>:<session id>`, keeping a caller `--locator` after it;
 - refuses `remember --verified`. `Trace::validate` also refuses a verified trace with such a locator on every write path;
 - refuses `verify-ledger --accept-tail` and `verify-ledger --reset-head`. Both accept ledger records no hikmah write acknowledged, which may be a forged append, and an agent that follows a refusal message must not be the one to approve them.
 
