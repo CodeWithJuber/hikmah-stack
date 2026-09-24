@@ -28,7 +28,16 @@
 //!   `lo` is within `REVERSIBILITY_BAND` of the best `lo`, the reversible option is recommended.
 //!
 //! The band and the weak-evidence threshold are explicit heuristics.
+//!
+//! [`estimate_missing_criteria`] fills `model_scores` from a typed decision engine. Options with a
+//! hard block are never sent (they can never be recommended), and every other estimate goes into
+//! as few requests as the port's limits allow, one score question `o{option}_c{criterion}` each.
+use crate::decision_port::{
+    ask, AdmittedDecision, DecisionEngine, DecisionRequest, Question, QuestionKind, MAX_QUESTIONS,
+    MAX_STATE_CHARS,
+};
 use crate::error::{KernelError, Result};
+use crate::trace::Trace;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -269,5 +278,180 @@ pub fn evaluate(frame: &DecisionFrame) -> Result<DecisionResult> {
         ranking,
         reversibility_preferred,
         decisive,
+    })
+}
+
+/// Levels of the score question asked for each missing criterion, lowest first.
+pub const ESTIMATE_LEVELS: [&str; 5] = ["very poor", "poor", "fair", "good", "excellent"];
+
+/// One criterion an engine was asked to estimate for one option.
+#[derive(Debug, Clone, Serialize)]
+pub struct CriterionEstimate {
+    pub option: String,
+    pub criterion: String,
+    /// Question id in the engine request: `o{option index}_c{criterion index}`.
+    pub question_id: String,
+    /// Normalized score in [0, 1], or `None` when the engine abstained.
+    pub score: Option<f64>,
+    /// `model:<engine>@<version>`.
+    pub engine: String,
+    /// Always false: the kernel does not calibrate engine estimates (see `hikmah calibration`).
+    pub calibrated: bool,
+    /// Why there is no score.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// What [`estimate_missing_criteria`] asked and got back.
+#[derive(Debug, Clone)]
+pub struct Estimation {
+    pub estimates: Vec<CriterionEstimate>,
+    /// Options with a description and missing criteria that were not sent because they have a
+    /// hard block: they can never be recommended, so an estimate could not change the result.
+    pub skipped_blocked: Vec<String>,
+    /// Each request sent and its admitted decision, in order.
+    pub exchanges: Vec<(DecisionRequest, AdmittedDecision)>,
+}
+
+impl Estimation {
+    /// Every admitted estimate as an unverified `prediction` trace (family
+    /// `decide.<criterion id>`), for one batched write.
+    pub fn prediction_traces(&self) -> Vec<Trace> {
+        self.exchanges
+            .iter()
+            .flat_map(|(request, decision)| decision.prediction_traces(request))
+            .collect()
+    }
+}
+
+/// Ask `engine` to estimate the criteria an option has no score for, from its description, and
+/// store the answers in `model_scores`. The frame is validated first, so an invalid frame never
+/// reaches the engine. Options without a description, and options with a hard block, are not
+/// sent. All other questions share one request, split only where a request would exceed
+/// [`MAX_QUESTIONS`] questions or [`MAX_STATE_CHARS`] characters of state.
+pub fn estimate_missing_criteria(
+    engine: &dyn DecisionEngine,
+    frame: &mut DecisionFrame,
+) -> Result<Estimation> {
+    evaluate(frame)?;
+    let header = format!("Decision: {}\nOptions:\n", frame.question.trim());
+    let option_line = |option: &DecisionOption, description: &str| {
+        format!("- {}: {}\n", option.name, description.trim())
+    };
+
+    // (option index, criterion index) pairs, grouped into requests.
+    let mut chunks: Vec<Vec<(usize, usize)>> = Vec::new();
+    let mut current: Vec<(usize, usize)> = Vec::new();
+    let mut in_current: BTreeSet<usize> = BTreeSet::new();
+    let mut state_chars = header.chars().count();
+    let mut skipped_blocked = Vec::new();
+    for (i, option) in frame.options.iter().enumerate() {
+        let Some(description) = option
+            .description
+            .as_deref()
+            .filter(|d| !d.trim().is_empty())
+        else {
+            continue;
+        };
+        let missing: Vec<usize> = frame
+            .criteria
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                !option.scores.contains_key(&c.id) && !option.model_scores.contains_key(&c.id)
+            })
+            .map(|(j, _)| j)
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        if !option.hard_blocks.is_empty() {
+            skipped_blocked.push(option.name.clone());
+            continue;
+        }
+        let line_chars = option_line(option, description).chars().count();
+        for j in missing {
+            let adds_line = !in_current.contains(&i);
+            let full = current.len() == MAX_QUESTIONS
+                || (adds_line && state_chars + line_chars > MAX_STATE_CHARS);
+            if full && !current.is_empty() {
+                chunks.push(std::mem::take(&mut current));
+                in_current.clear();
+                state_chars = header.chars().count();
+            }
+            if in_current.insert(i) {
+                state_chars += line_chars;
+            }
+            current.push((i, j));
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    let mut estimates = Vec::new();
+    let mut exchanges = Vec::new();
+    for chunk in chunks {
+        let mut state = header.clone();
+        let mut listed = BTreeSet::new();
+        for &(i, _) in &chunk {
+            if listed.insert(i) {
+                let option = &frame.options[i];
+                state.push_str(&option_line(
+                    option,
+                    option.description.as_deref().unwrap_or_default(),
+                ));
+            }
+        }
+        let questions = chunk
+            .iter()
+            .map(|&(i, j)| {
+                let criterion = &frame.criteria[j];
+                Question {
+                    id: format!("o{i}_c{j}"),
+                    instructions: format!(
+                        "Rate option \"{}\" on: {} ({})",
+                        frame.options[i].name, criterion.description, criterion.id
+                    ),
+                    kind: QuestionKind::Score {
+                        levels: ESTIMATE_LEVELS.iter().map(|s| s.to_string()).collect(),
+                    },
+                    family: Some(format!("decide.{}", criterion.id)),
+                }
+            })
+            .collect();
+        let request = DecisionRequest::new(state, questions)?;
+        let decision = ask(engine, &request)?;
+        for &(i, j) in &chunk {
+            let question_id = format!("o{i}_c{j}");
+            let criterion = frame.criteria[j].id.clone();
+            let option = &mut frame.options[i];
+            let score = decision
+                .answer(&question_id)
+                .and_then(|answer| answer.normalized_score());
+            if let Some(score) = score {
+                option.model_scores.insert(criterion.clone(), score);
+            }
+            estimates.push(CriterionEstimate {
+                option: option.name.clone(),
+                criterion,
+                question_id,
+                score,
+                engine: decision.engine.source(),
+                calibrated: false,
+                reason: score.is_none().then(|| {
+                    decision
+                        .rejected
+                        .clone()
+                        .unwrap_or_else(|| "abstained".into())
+                }),
+            });
+        }
+        exchanges.push((request, decision));
+    }
+    Ok(Estimation {
+        estimates,
+        skipped_blocked,
+        exchanges,
     })
 }

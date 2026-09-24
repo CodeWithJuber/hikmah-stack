@@ -1,7 +1,7 @@
 mod common;
 
 use common::temp_store;
-use hikmah_kernel::decision_port::{EngineDescriptor, RawAnswer, StaticEngine};
+use hikmah_kernel::decision_port::{EngineDescriptor, Forecast, RawAnswer, StaticEngine};
 use hikmah_kernel::hook::{run_stop_hook_recording, run_stop_hook_with, GATE_FAMILY};
 use hikmah_kernel::policy::KernelPolicy;
 use hikmah_kernel::trace::{OutcomeRecord, Trace, TraceKind};
@@ -286,4 +286,45 @@ fn a_busy_record_store_is_skipped_not_waited_on() {
         predictions(&store).is_empty(),
         "nothing is recorded while busy"
     );
+}
+
+#[test]
+fn forecasts_by_people_never_steer_the_engine_threshold() {
+    let store = temp_store("gate-threshold-people");
+    resolve(&store, &rows(&[(0.2, false, 39), (0.8, true, 10)]));
+    let mut memory = MemoryStore::open_existing(&store, KernelPolicy::default()).unwrap();
+    for (p, observed) in [(0.9, "true"), (0.1, "false"), (0.7, "true")] {
+        let forecast = Forecast {
+            family: GATE_FAMILY.into(),
+            question: "Is this completion claim false?".into(),
+            kind: "noul".into(),
+            p,
+            value: None,
+            answer_space: Vec::new(),
+            source: "human:reviewer".into(),
+            locator: None,
+        }
+        .into_trace()
+        .unwrap();
+        let (forecast, _) = memory.remember(forecast).unwrap();
+        let mut outcome = Trace::new(TraceKind::Outcome, "CI result for the task", "ci");
+        outcome.outcome = Some(OutcomeRecord {
+            prediction_id: forecast.id,
+            observed: observed.into(),
+        });
+        memory.remember(outcome).unwrap();
+    }
+    // 49 engine predictions: still below the minimum, whatever people forecast.
+    match memory.gate_threshold(0.10) {
+        Err(KernelError::Invalid(message)) => assert!(message.contains("only 49"), "{message}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    // Calibration still scores the reviewer, in a row of its own.
+    let engines: Vec<String> = memory
+        .calibration(Some(GATE_FAMILY))
+        .families
+        .into_iter()
+        .map(|f| f.engine)
+        .collect();
+    assert_eq!(engines, vec!["fixture@1", "human:reviewer"]);
 }
