@@ -181,6 +181,19 @@ fn no_engine_abstains_and_bad_requests_are_refused() {
     };
     assert!(ask(&NoEngine, &secret).is_err());
 
+    // Saying where a key is kept is not the key: the request reaches the engine.
+    let described = DecisionRequest {
+        state: "TYPESAFE_API_KEY=server-only, never shipped to the client. The WHMCS api_key: configured-in-env".into(),
+        questions: vec![Question::noul("ok", "Is this ok?")],
+    };
+    assert!(ask(&NoEngine, &described).is_ok());
+    // A human password made of words and digits is a value, and never leaves the machine.
+    let password = DecisionRequest {
+        state: "TYPESAFE_API_KEY=server-only; staging DB_PASSWORD=admin_pass123".into(),
+        questions: vec![Question::noul("ok", "Is this ok?")],
+    };
+    assert!(ask(&NoEngine, &password).is_err());
+
     let one_option = DecisionRequest {
         state: "x".into(),
         questions: vec![Question {

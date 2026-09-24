@@ -56,6 +56,7 @@ v2 against v1: +7.2 points of recall (95% CI [3.3, 11.2]) and +0.084 AUROC (95% 
 
 - There is one agent, one model and one scaffold. The gate sees only the message, and labels come from the tasks' own tests.
 - Claude Code stop messages were not in the sample.
+- The rules were narrowed after this measurement (2026-09-23). A term that names a thing (`the TODO list widget`, `a Coming soon badge`, `the search input placeholder`) or a promise the user has to trigger (`If you want, I'll ...`) no longer blocks. The "Rules alone" row, and the rules floor under the shipped v2 row, were measured with the earlier rules and have not been re-run. The narrowing only removes blocks: on 112,000 generated messages the new rules never blocked a message the earlier rules allowed (a check of the rules, not of harness-bench traffic). So the rules' block rate on these messages can only have gone down. The opt-in engine lift (`HIKMAH_HOOK_ENGINE_LIFT`) was not measured at all.
 - The durable lesson: from the message alone, most false completions read like true ones, so a Stop hook is a screen, not a verifier. Execution evidence (tests actually run) is what catches the rest.
 
 ## Evidence maintenance rule

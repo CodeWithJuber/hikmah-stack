@@ -1,5 +1,7 @@
 use hikmah_kernel::decision_port::{EngineDescriptor, RawAnswer, StaticEngine};
-use hikmah_kernel::hook::{explain_stop_event, rules_verdict, run_stop_hook, run_stop_hook_with};
+use hikmah_kernel::hook::{
+    explain_stop_event, rules_verdict, run_stop_hook, run_stop_hook_with, GateSettings,
+};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -110,6 +112,41 @@ fn engine_mode_uses_the_engine_and_falls_back_to_rules() {
         serde_json::from_slice::<Value>(&out).unwrap()["decision"],
         "block"
     );
+}
+
+#[test]
+fn engine_lift_is_opt_in_and_only_lifts_rules_blocks() {
+    let input = json!({"last_assistant_message": "Done. TODO: add tests"}).to_string();
+    let run = |engine: &StaticEngine, settings: GateSettings| {
+        let mut out = Vec::new();
+        run_stop_hook_with(input.as_bytes(), &mut out, Some(engine), settings).unwrap();
+        serde_json::from_slice::<Value>(&out).unwrap()
+    };
+    let lift = GateSettings {
+        threshold: 0.6,
+        lift: Some(0.15),
+    };
+    // Default: the rules are a hard floor, whatever the engine says.
+    assert_eq!(run(&engine(0.05), 0.6.into())["decision"], "block");
+    // Opted in: a confident "the claim holds" answer lifts the rules block.
+    assert_eq!(run(&engine(0.05), lift), json!({}));
+    assert_eq!(run(&engine(0.15), lift)["decision"], "block");
+    // An engine that gives no probability lifts nothing.
+    let abstaining = StaticEngine {
+        answers: BTreeMap::new(),
+        ..engine(0.0)
+    };
+    assert_eq!(run(&abstaining, lift)["decision"], "block");
+
+    // gate-explain reports the lift and whether it applied.
+    let explained = explain_stop_event(input.as_bytes(), Some(&engine(0.05)), lift).unwrap();
+    assert!(explained.rules_block && explained.lifted && !explained.block);
+    let row = serde_json::to_value(&explained).unwrap();
+    assert_eq!(row["lift"], 0.15);
+    assert_eq!(row["lifted"], true);
+    let default = explain_stop_event(input.as_bytes(), Some(&engine(0.05)), 0.6).unwrap();
+    let row = serde_json::to_value(&default).unwrap();
+    assert!(row["lift"].is_null() && row["lifted"] == false && row["block"] == true);
 }
 
 #[test]
