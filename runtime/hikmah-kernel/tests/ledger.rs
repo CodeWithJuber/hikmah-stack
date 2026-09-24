@@ -431,6 +431,43 @@ fn credentials_are_refused_in_every_field_before_anything_is_written() {
 }
 
 #[test]
+fn notes_that_describe_a_secret_are_stored_but_values_are_not() {
+    // Configuration notes a HostLelo session tried to remember (review, 2026-09). Each says where
+    // or how a secret is kept, which is what the refusal message asks people to record.
+    let path = temp_store("secret-descriptions");
+    let mut store = open(&path);
+    for content in [
+        "TYPESAFE_API_KEY=server-only, never shipped to the client",
+        "Kubernetes secret: hostlelo-whmcs-creds is mounted into the pod",
+        "password=hashed_with_argon2id before storage",
+        "The WHMCS api_key: configured-in-env",
+        "client_secret=rotated-2026-09 in the vault",
+    ] {
+        store
+            .remember(note(content))
+            .unwrap_or_else(|e| panic!("{content}: {e}"));
+    }
+    let before = line_count(&path);
+    for content in [
+        "client_secret=x9K2pQ7vR4mT8wZ1 in the vault",
+        "TYPESAFE_API_KEY=server-only, DB_PASSWORD=hunter2hunter2",
+        "wifi password=summer-2024",
+        // Words with a trailing number, or a date with no event word, are passwords.
+        "DB_PASSWORD=admin_pass123",
+        "mysql root password: super-secret1",
+        "api_key=ADMIN_PASS1",
+        "ADMIN_PASSWORD=admin-pass-2024-09",
+    ] {
+        assert!(
+            matches!(store.remember(note(content)), Err(KernelError::Invalid(_))),
+            "a value must still be refused: {content}"
+        );
+    }
+    assert_eq!(line_count(&path), before, "nothing may be written");
+    open(&path).verify().unwrap();
+}
+
+#[test]
 fn a_purge_reason_cannot_re_leak_the_credential() {
     let path = temp_store("purge-secret");
     let mut store = open(&path);

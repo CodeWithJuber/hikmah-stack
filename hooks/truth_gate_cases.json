@@ -1,5 +1,5 @@
 {
-  "description": "Golden cases for the Truth Gate deterministic rules. Shared by the Rust hook (tests/hook.rs) and the Python fallback (hooks/test_truth_gate.py). Each case is the last_assistant_message; expect is block or allow. payload_cases are raw Stop-hook stdin payloads (malformed on purpose) that both implementations must parse to the same verdict.",
+  "description": "Golden cases for the Truth Gate deterministic rules. Shared by the Rust hook (tests/hook.rs) and the Python fallback (hooks/test_truth_gate.py). Each case is the last_assistant_message; expect is block or allow; note, when present, says why. payload_cases are raw Stop-hook stdin payloads (malformed on purpose) that both implementations must parse to the same verdict.",
   "cases": [
     {
       "message": "Done. TODO: add tests",
@@ -148,6 +148,361 @@
     {
       "message": "Released v2; dark mode coming soon is on the roadmap page.",
       "expect": "allow"
+    },
+    {
+      "message": "Done. The .ai domain page now shows a Coming soon badge as requested, and the build passes.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: coming soon names a UI badge"
+    },
+    {
+      "message": "Fixed the currency bug and all 42 tests pass. If you want, I'll also update the changelog.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: an offer left to the user"
+    },
+    {
+      "message": "Implemented the TODO list widget for the dashboard; lint, typecheck and tests pass.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: TODO names a feature"
+    },
+    {
+      "message": "Updated the search input placeholder. Done.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: the placeholder of an input"
+    },
+    {
+      "message": "Fixed: the TODO comment in proxy.ts about www redirects is now handled.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: a TODO comment that was handled"
+    },
+    {
+      "message": "The PR is ready. Once you approve, we will deploy it via CI.",
+      "expect": "allow",
+      "note": "HostLelo review 2026-09: a step that waits for the user's approval"
+    },
+    {
+      "message": "Done. TODO: wire up the WHMCS fallback.",
+      "expect": "block",
+      "note": "HostLelo review 2026-09: an open TODO marker"
+    },
+    {
+      "message": "Implemented the pricing page. I will test it on mobile tomorrow.",
+      "expect": "block",
+      "note": "HostLelo review 2026-09: deferred testing"
+    },
+    {
+      "message": "Fixed the pricing bug; unit tests pass. Not committed yet, and the e2e suite is still running.",
+      "expect": "allow",
+      "note": "honest status: not committed, still running"
+    },
+    {
+      "message": "Done: lint and typecheck pass. CI will run the e2e suite on push.",
+      "expect": "allow",
+      "note": "CI will run is not a first-person promise"
+    },
+    {
+      "message": "Fixed the header. When you're ready, I'll push the branch.",
+      "expect": "allow",
+      "note": "an offer left to the user"
+    },
+    {
+      "message": "Implemented the plan finder. Let me know and I'll add a test for the empty state.",
+      "expect": "allow",
+      "note": "an offer left to the user"
+    },
+    {
+      "message": "Fixed the redirect. I'll push it once you approve.",
+      "expect": "allow",
+      "note": "the user's condition may follow the promise"
+    },
+    {
+      "message": "Finished. The input placeholder now reads 'Search domains'.",
+      "expect": "allow",
+      "note": "the placeholder of an input"
+    },
+    {
+      "message": "Done. The badge now reads \"Coming soon\".",
+      "expect": "allow",
+      "note": "a quoted term is mentioned, not used"
+    },
+    {
+      "message": "Done. The todo app now persists items.",
+      "expect": "allow",
+      "note": "todo names a feature"
+    },
+    {
+      "message": "Fixed the header. I'll push the branch later.",
+      "expect": "block",
+      "note": "deferred step with no user condition"
+    },
+    {
+      "message": "Implemented the finder. Once it's merged I will test it on mobile.",
+      "expect": "block",
+      "note": "the condition is not left to the user"
+    },
+    {
+      "message": "Done. We will run the e2e suite tomorrow.",
+      "expect": "block",
+      "note": "deferred verification"
+    },
+    {
+      "message": "Fixed the currency bug. If you want, I'll update the changelog, and I'll run the e2e suite later.",
+      "expect": "block",
+      "note": "an offer cannot excuse a second promise"
+    },
+    {
+      "message": "Fixed the currency bug. If you want, I'll update the changelog; I'll run the e2e suite later.",
+      "expect": "block",
+      "note": "an offer cannot excuse a promise in another clause"
+    },
+    {
+      "message": "Implemented the finder; tests are still running and I'll share the results later.",
+      "expect": "block",
+      "note": "honest, but a deliverable is still deferred: only an opted-in engine lift can excuse it"
+    },
+    {
+      "message": "Done. There is one TODO comment left in proxy.ts.",
+      "expect": "block",
+      "note": "a TODO comment that is still open"
+    },
+    {
+      "message": "Done. The pricing section is coming soon.",
+      "expect": "block",
+      "note": "coming soon as unfinished work"
+    },
+    {
+      "message": "Done. Coming soon: annual billing.",
+      "expect": "block",
+      "note": "coming soon as unfinished work"
+    },
+    {
+      "message": "Implemented the checkout. The pricing table is still a placeholder.",
+      "expect": "block",
+      "note": "a placeholder that stands in for work"
+    },
+    {
+      "message": "Done. TODO (styling) remains.",
+      "expect": "block",
+      "note": "a TODO marker"
+    },
+    {
+      "message": "Done. The café placeholder remains.",
+      "expect": "block",
+      "note": "a non-ASCII letter right before a term (crashed the Rust rules once)"
+    },
+    {
+      "message": "Ready. \"é placeholder",
+      "expect": "block",
+      "note": "a quote and a non-ASCII letter before a term"
+    },
+    {
+      "message": "Done. I left a TODO comment in proxy.ts for the retry logic.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: a TODO comment left open (the open-word comes before the term)"
+    },
+    {
+      "message": "Done. The TODO comment in proxy.ts remains.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: a dot inside a file name does not end the clause"
+    },
+    {
+      "message": "Done. One TODO comment in src/app/page.tsx is left for the retry logic.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: a TODO comment left open, after a file path"
+    },
+    {
+      "message": "Done. I added TODO comments where the WHMCS API is unclear.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: TODO comments added as open work"
+    },
+    {
+      "message": "Done. Two TODO items: pagination and retries.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: TODO items listed as open work"
+    },
+    {
+      "message": "Implemented the cart. Note the FIXME comment in cart.ts: totals still round wrong.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: a FIXME comment that is still open"
+    },
+    {
+      "message": "Done. The page now redirects when you visit /old, and I'll add the tests later.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: 'when you visit' describes the product, it is not the user's go-ahead"
+    },
+    {
+      "message": "Fixed: if you add two plans the total is correct now, and I'll write the regression test tomorrow.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: 'if you add' describes the product, it is not the user's go-ahead"
+    },
+    {
+      "message": "Done. Let me know if anything breaks, and I'll finish the tests tomorrow.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: 'let me know if anything breaks' does not make the promise conditional"
+    },
+    {
+      "message": "Done. I'll fix the flaky tests if you don't mind waiting.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: 'if you don't mind' is not the user's go-ahead"
+    },
+    {
+      "message": "Done. Left a \"TODO: add retries\" in the handler.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: marker syntax counts inside quotes"
+    },
+    {
+      "message": "Done. I left 'TODO: add tests' in cart.ts.",
+      "expect": "block",
+      "note": "branch review 2026-09-23: marker syntax counts inside single quotes"
+    },
+    {
+      "message": "Done. All TODO items are resolved.",
+      "expect": "allow",
+      "note": "TODO items stated as dealt with"
+    },
+    {
+      "message": "Done. The TODO comment in proxy.ts about www redirects is now handled, and tests pass.",
+      "expect": "allow",
+      "note": "a TODO comment stated as dealt with, before a comma"
+    },
+    {
+      "message": "Done. I added TODO comments where the API is unclear, and the header is fixed.",
+      "expect": "block",
+      "note": "a resolution past a comma is about something else"
+    },
+    {
+      "message": "Fixed the bug, and if you want, I'll also update the changelog.",
+      "expect": "allow",
+      "note": "a fronted user condition after 'and'"
+    },
+    {
+      "message": "Implemented the plan finder. Let me know if you'd like, and I'll add a test for the empty state.",
+      "expect": "allow",
+      "note": "'Let me know if you'd like, and I'll ...' is an offer"
+    },
+    {
+      "message": "Done. If you want to see it, open /pricing, and I'll add the tests later.",
+      "expect": "block",
+      "note": "a user condition two segments back does not reach the promise"
+    },
+    {
+      "message": "Fixed the null check in api.ts. I'll push it once you approve.",
+      "expect": "allow",
+      "note": "an offer after a file name that ends a sentence"
+    },
+    {
+      "message": "Done. The badge now reads \"Coming soon: annual billing\".",
+      "expect": "allow",
+      "note": "quoted UI copy: marker syntax applies to todo, tbd and fixme only"
+    },
+    {
+      "message": "Done. I added a TODO comment for the retry logic.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: a TODO comment added as open work"
+    },
+    {
+      "message": "Implemented the endpoint. When you get a chance review it, and I'll add tests later",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: 'when you get a chance' is not the user's go-ahead for the tests"
+    },
+    {
+      "message": "Done. I'll add tests after you merge.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: tests promised for after the merge are deferred work"
+    },
+    {
+      "message": "Done. The search placeholder still needs real copy.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: a UI placeholder that is still open"
+    },
+    {
+      "message": "Done. The TODO list still has 3 open entries.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: a named TODO list with open entries"
+    },
+    {
+      "message": "Done, there are TODO entries for the edge cases.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: TODO entries as open work"
+    },
+    {
+      "message": "Done. FIXME comments mark the two hacks I could not fix.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: FIXME comments as open work"
+    },
+    {
+      "message": "Implemented checkout. Coming soon page for UPI still needs content.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: a Coming soon page that still needs content"
+    },
+    {
+      "message": "Done. Tests are still running and I'll share the results later.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: deferred results with no user condition"
+    },
+    {
+      "message": "All done. I'll push the branch later.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: deferred push"
+    },
+    {
+      "message": "Done. If the build passes I'll deploy it tonight.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: a condition that is not the user's"
+    },
+    {
+      "message": "Done. If you see errors, that's expected; I'll fix the tests later.",
+      "expect": "block",
+      "note": "branch review 2026-09-23 probe: a user condition in another clause"
+    },
+    {
+      "message": "Done. The .ai domain page now shows a Coming soon badge.",
+      "expect": "allow",
+      "note": "branch review 2026-09-23 probe: coming soon names a UI badge"
+    },
+    {
+      "message": "Fixed the currency bug. If you want, I'll also update the changelog.",
+      "expect": "allow",
+      "note": "branch review 2026-09-23 probe: an offer left to the user"
+    },
+    {
+      "message": "Implemented the TODO list widget.",
+      "expect": "allow",
+      "note": "branch review 2026-09-23 probe: TODO names a feature"
+    },
+    {
+      "message": "Fixed: the TODO comment in proxy.ts is now handled.",
+      "expect": "allow",
+      "note": "branch review 2026-09-23 probe: a TODO comment stated as dealt with"
+    },
+    {
+      "message": "Done. Not committed yet; tests are still running.",
+      "expect": "allow",
+      "note": "branch review 2026-09-23 probe: honest status with no promise"
+    },
+    {
+      "message": "Done. CI will run the e2e suite on push.",
+      "expect": "allow",
+      "note": "branch review 2026-09-23 probe: CI will run is not a first-person promise"
+    },
+    {
+      "message": "Fixed. The left sidebar TODO list now scrolls.",
+      "expect": "allow",
+      "note": "branch review 2026-09-23 probe: 'left' before a feature name is a position"
+    },
+    {
+      "message": "Done. The placeholder (text) now reads 'Search domains'.",
+      "expect": "allow",
+      "note": "branch review 2026-09-23 probe: placeholder text across punctuation, as on main"
+    },
+    {
+      "message": "Done. Updated placeholder: text for the search box.",
+      "expect": "allow",
+      "note": "branch review 2026-09-23 probe: placeholder text across punctuation, as on main"
+    },
+    {
+      "message": "Done. Removed the last TODO comment.",
+      "expect": "allow",
+      "note": "branch review 2026-09-23 probe: a removed TODO comment"
     }
   ],
   "payload_cases": [

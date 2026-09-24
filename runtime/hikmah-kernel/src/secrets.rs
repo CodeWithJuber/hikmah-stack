@@ -55,6 +55,109 @@ fn is_reference_or_placeholder(value: &str) -> bool {
             .any(|prefix| lower.starts_with(prefix))
 }
 
+/// Words that make a lowercase word chain read as a description of where or how a secret is
+/// kept (`server-only`, `hashed_with_argon2id`, `configured-in-env`, `quarterly-via-vault`,
+/// `hostlelo-whmcs-creds`) rather than as the secret itself. A chain with none of them
+/// (`correct-horse-battery-staple`, `qwerty_asdf`, `admin_pass`) is a passphrase: refused.
+const DESCRIBING_WORDS: &[&str] = &[
+    "as",
+    "at",
+    "by",
+    "for",
+    "from",
+    "in",
+    "into",
+    "of",
+    "on",
+    "only",
+    "via",
+    "with",
+    "without",
+    "not",
+    "never",
+    "no",
+    "see",
+    "set",
+    "stored",
+    "hashed",
+    "hash",
+    "encrypted",
+    "env",
+    "environment",
+    "vault",
+    "kms",
+    "managed",
+    "manager",
+    "rotated",
+    "rotation",
+    "redacted",
+    "masked",
+    "configured",
+    "mounted",
+    "provided",
+    "loaded",
+    "injected",
+    "server",
+    "client",
+    "side",
+    "runtime",
+    "config",
+    "settings",
+    "dashboard",
+    "creds",
+    "credentials",
+    "placeholder",
+    "unset",
+    "none",
+    "empty",
+    "required",
+    "daily",
+    "weekly",
+    "monthly",
+    "quarterly",
+    "yearly",
+    "annually",
+];
+
+/// An assignment value that describes a secret instead of being one:
+/// - a chain of two or more lowercase words joined by `-` or `_` that contains a describing
+///   word (`server-only`, `hashed_with_argon2id`, `hostlelo-whmcs-creds`; see
+///   [`DESCRIBING_WORDS`]);
+/// - words ending in an event word and an ISO year-month or date (`rotated-2026-09`,
+///   `key-issued-2026-09-01`): the word just before the date must end in `ed`;
+/// - an environment variable *name* (`TYPESAFE_API_KEY`).
+///
+/// A word never ends in a digit: at most one run of digits sits between its letters
+/// (`argon2id`). So `pass123`, `secret1`, `hunter2` or `PASS1` anywhere in the value makes it
+/// count as a credential, and so do `sha256` and `oauth2`. The first word is letters only, at
+/// least two of them, so random tokens (`ts_live_f9a8b7c6`) and `p_assw0rd` still count as
+/// values. So do a single word (`changeme123`, `princess`), a word plus a bare number
+/// (`summer-2024`), words plus a date with no event word (`admin-pass-2024-09`), and a word
+/// chain with no describing word (`correct-horse-battery-staple`, `qwerty_asdf`, `admin_pass`),
+/// because common human passwords and passphrases look like that.
+fn is_description(value: &str) -> bool {
+    static CHAIN: OnceLock<Regex> = OnceLock::new();
+    static OTHER: OnceLock<Regex> = OnceLock::new();
+    let first = "[a-z]{2,}";
+    let word = "[a-z]+(?:[0-9]+[a-z]+)?";
+    let chain = CHAIN.get_or_init(|| {
+        Regex::new(&format!("^{first}(?:[-_]{word})+$")).expect("description chain regex")
+    });
+    let other = OTHER.get_or_init(|| {
+        let date = "[0-9]{4}-[0-9]{2}(?:-[0-9]{2})?";
+        let name_first = "[A-Z]{2,}(?:[0-9]+[A-Z]+)?";
+        let name_word = "[A-Z]+(?:[0-9]+[A-Z]+)?";
+        Regex::new(&format!(
+            "^(?:(?:{first}(?:[-_]{word})*[-_])?[a-z]+ed[-_]{date}|{name_first}(?:_{name_word})+)$"
+        ))
+        .expect("description regex")
+    });
+    // Sentence punctuation after the value is not part of it.
+    let v = value.trim_end_matches(['.', '!', '?', ':', ')']);
+    other.is_match(v)
+        || (chain.is_match(v) && v.split(['-', '_']).any(|w| DESCRIBING_WORDS.contains(&w)))
+}
+
 /// True when `text` contains something shaped like a credential.
 pub fn contains_secret(text: &str) -> bool {
     patterns().is_match(text)
@@ -63,7 +166,7 @@ pub fn contains_secret(text: &str) -> bool {
             .any(|m| m.as_str().bytes().any(|b| b.is_ascii_digit()))
         || assignment()
             .captures_iter(text)
-            .any(|c| !is_reference_or_placeholder(&c[1]))
+            .any(|c| !is_reference_or_placeholder(&c[1]) && !is_description(&c[1]))
 }
 
 #[cfg(test)]
@@ -83,8 +186,66 @@ mod tests {
             // A placeholder earlier on the line does not hide a real value later on it.
             "API_KEY=${KEY} DB_PASSWORD=hunter2hunter2",
             "password: changeme123",
+            // Values still count when they look like human passwords or random tokens, even
+            // next to a description on the same line.
+            "wifi password=summer-2024",
+            "DB_PASSWORD=princess1",
+            "admin password: princesses",
+            "client_secret=Rotated-2026-09",
+            "client_secret=x9K2pQ7vR4mT8wZ1",
+            "TYPESAFE_API_KEY=server-only DB_PASSWORD=hunter2hunter2",
+            "API_KEY=ts_live_4f9a8b7c6d5e4f3a",
+            "API_KEY=ts_live_f9a8b7c6d5e4f3a1",
+            "DB_PASSWORD=X9K2P0QZ7TRM_AB12CD34",
+            // Words plus digits, and words plus a date, are human passwords, not descriptions.
+            // Each was stored by an earlier version of the description rule (review, 2026-09).
+            "DB_PASSWORD=admin_pass123",
+            "password=hunter_hunter2",
+            "wifi password=welcome-home1",
+            "mysql root password: super-secret1",
+            "password=summer_fun2024",
+            "password=p_assw0rd",
+            "api_key=ADMIN_PASS1",
+            "ADMIN_PASSWORD=admin-pass-2024-09",
+            "client_secret=x_rotated-2026-09",
         ] {
             assert!(contains_secret(sample), "missed: {sample}");
+        }
+    }
+
+    #[test]
+    fn passphrase_like_word_chains_are_credentials() {
+        // A lowercase word chain with no describing word is a passphrase, not a description.
+        for sample in [
+            "db_password=qwerty_asdf",
+            "password=correct-horse-battery-staple",
+            "admin password: admin_pass",
+            "password=my_p4ssw0rd",
+            "wifi password=blue-elephant-sunrise",
+        ] {
+            assert!(contains_secret(sample), "missed: {sample}");
+        }
+    }
+
+    #[test]
+    fn configuration_notes_are_not_credentials() {
+        // Refused by `remember` before descriptions were recognised (HostLelo review, 2026-09).
+        for sample in [
+            "TYPESAFE_API_KEY=server-only, never shipped to the client",
+            "Kubernetes secret: hostlelo-whmcs-creds is mounted into the pod",
+            "password=hashed_with_argon2id before storage",
+            "The WHMCS api_key: configured-in-env",
+            "client_secret=rotated-2026-09 in the vault",
+            // Environment variable names are names, not values.
+            "Set TYPESAFE_API_KEY in .env; the hook reads it server-side only.",
+            "apiKeyEnv: TYPESAFE_API_KEY",
+            "\"secret_name\": \"WHMCS_API_SECRET\"",
+            "Key rotation note: api_key_rotation=quarterly-via-vault, last rotated 2026-09-01.",
+            "The WHMCS api_key: configured-in-env.",
+            "client_secret=key-issued-2026-09-01 by the platform team",
+            "password=stored_as_argon2id_hash",
+        ] {
+            assert!(!contains_secret(sample), "false positive: {sample}");
         }
     }
 

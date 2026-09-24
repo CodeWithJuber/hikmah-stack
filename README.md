@@ -42,7 +42,7 @@ The table below separates executable evidence from architectural intent.
 | Retrieval | Deterministic relevance gate (terms or tags must match), light stemming, CJK bigrams, metadata scaling, duplicate folding; no embeddings |
 | Model integration | Typed `DecisionEngine` port with `NoEngine` and an opt-in TypeSafe Jev adapter; the text `ProposalEngine` still ships only `NoModel` |
 | Agent packaging | Portable instruction skills and thin Codex, Claude Code, and Kimi manifests |
-| Tests | 119 unit and integration tests (plus 1 ignored live Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
+| Tests | 124 unit and integration tests (plus 1 ignored live Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
 | Deployment | Local source/CLI use; no hosted service or public production deployment is claimed |
 
 ### What this repository does not claim
