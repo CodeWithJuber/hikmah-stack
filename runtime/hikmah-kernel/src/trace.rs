@@ -18,7 +18,9 @@ pub enum TraceKind {
     Constraint,
     Outcome,
     Correction,
-    /// A typed answer admitted from a decision engine. Never verified, never evidence by itself.
+    /// A forecast: a typed answer admitted from a decision engine (`model:` source), or a
+    /// forecast a person or agent recorded with `hikmah predict`. Never verified, never
+    /// evidence by itself; an `Outcome` resolves it.
     Prediction,
 }
 
@@ -137,7 +139,8 @@ pub struct Trace {
     pub outcome: Option<OutcomeRecord>,
 }
 
-/// What a decision engine answered, as admitted by the kernel.
+/// A forecast: what a decision engine answered (as admitted by the kernel), or what a person or
+/// agent forecast.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PredictionRecord {
     pub request_id: String,
@@ -146,7 +149,8 @@ pub struct PredictionRecord {
     pub family: String,
     /// `noul`, `choice`, or `score`.
     pub answer_kind: String,
-    /// Engine identity, e.g. `jev@jev-1.13.0`.
+    /// Who forecast: the engine identity (`jev@jev-1.13.0`) for a `model:` source, otherwise
+    /// the source principal itself (`human:alex`). Calibration groups by it.
     pub engine: String,
     /// Noul: probability of `true`. Choice/score: probability of the reported value.
     /// `None` when the engine reported neither a distribution nor a confidence.
@@ -246,14 +250,33 @@ impl Trace {
         }
         match self.kind {
             TraceKind::Prediction => {
-                if self.prediction.is_none() {
+                let Some(record) = &self.prediction else {
                     return Err(KernelError::Invalid(
                         "prediction traces need a prediction record".into(),
                     ));
+                };
+                // A forecast is never a verified fact, whoever made it; an outcome resolves it.
+                if self.provenance.verified {
+                    return Err(KernelError::Invalid(
+                        "prediction traces cannot be marked verified; record an outcome from a non-model principal instead"
+                            .into(),
+                    ));
                 }
-                if !self.is_model_authored() {
+                // The record's `engine` is who forecast. A `model:` source is an engine answer
+                // and names that engine; any other source is a human or agent forecast and names
+                // that principal. The name alone does not say which class wrote it (a principal
+                // could call itself `jev@…`), so calibration also keys every row by
+                // `is_model_authored()`, and neither class can land in the other's row.
+                let principal = self.provenance.source.trim();
+                let expected = if self.is_model_authored() {
+                    &principal[MODEL_SOURCE_PREFIX.len()..]
+                } else {
+                    principal
+                };
+                if record.engine != expected {
                     return Err(KernelError::Invalid(format!(
-                        "prediction traces must use a `{MODEL_SOURCE_PREFIX}` source"
+                        "prediction record engine `{}` must match its source `{principal}`",
+                        record.engine
                     )));
                 }
                 if self.supersedes.is_some() {
@@ -305,6 +328,16 @@ impl Trace {
                 .as_deref()
                 .map(|locator| ("locator", locator)),
         );
+        if let Some(record) = &self.prediction {
+            fields.push(("prediction family", record.family.as_str()));
+            fields.push(("prediction value", record.value.as_str()));
+            fields.extend(
+                record
+                    .answer_space
+                    .iter()
+                    .map(|value| ("prediction answer space", value.as_str())),
+            );
+        }
         match fields.into_iter().find(|(_, text)| contains_secret(text)) {
             Some((field, _)) => Err(KernelError::Invalid(format!(
                 "trace {field} appears to contain a credential; memory never stores secrets. Record where the secret is kept (for example a vault path), not its value"

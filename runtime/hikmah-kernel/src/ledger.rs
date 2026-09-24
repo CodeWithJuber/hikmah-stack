@@ -276,7 +276,39 @@ impl MemoryStore {
         Ok(())
     }
 
-    pub fn remember(&mut self, mut trace: Trace) -> Result<(Trace, Vec<ClaimConflict>)> {
+    pub fn remember(&mut self, trace: Trace) -> Result<(Trace, Vec<ClaimConflict>)> {
+        let (trace, conflicts, batch) = self.prepare_remember(trace, 0)?;
+        self.append_batch(batch)?;
+        Ok((trace, conflicts))
+    }
+
+    /// Append several traces as one batch: one lock, one validation pass, one write, so either
+    /// every trace is stored or none is. Each trace gets the same checks as [`Self::remember`]
+    /// against the stored state; an outcome must resolve a prediction that is already stored.
+    /// Conflicts are reported against stored traces, not between traces of the same batch.
+    pub fn remember_many(
+        &mut self,
+        traces: Vec<Trace>,
+    ) -> Result<Vec<(Trace, Vec<ClaimConflict>)>> {
+        let mut batch = Vec::new();
+        let mut remembered = Vec::with_capacity(traces.len());
+        for (index, trace) in traces.into_iter().enumerate() {
+            let (trace, conflicts, payloads) = self.prepare_remember(trace, index)?;
+            batch.extend(payloads);
+            remembered.push((trace, conflicts));
+        }
+        // `validate_batch` (inside `append_batch`) also rejects duplicate ids within the batch.
+        self.append_batch(batch)?;
+        Ok(remembered)
+    }
+
+    /// Validate one trace against the stored state and build its ledger events. `batch_index`
+    /// keeps generated ids distinct between traces of one batch.
+    fn prepare_remember(
+        &self,
+        mut trace: Trace,
+        batch_index: usize,
+    ) -> Result<(Trace, Vec<ClaimConflict>, Vec<LedgerPayload>)> {
         trace.validate()?;
         if trace.privacy == PrivacyClass::Sensitive && !self.policy.allow_sensitive_persistence {
             return Err(KernelError::Invalid(
@@ -285,7 +317,7 @@ impl MemoryStore {
             ));
         }
         if trace.id.is_empty() {
-            trace.id = self.next_trace_id(&trace);
+            trace.id = self.next_trace_id(&trace, batch_index);
         }
         trace.validate()?;
         if self.traces.contains_key(&trace.id) {
@@ -355,8 +387,7 @@ impl MemoryStore {
                 new_id: trace.id.clone(),
             });
         }
-        self.append_batch(batch)?;
-        Ok((trace, conflicts))
+        Ok((trace, conflicts, batch))
     }
 
     pub fn fulfill(&mut self, id: impl Into<String>) -> Result<()> {
@@ -712,10 +743,10 @@ impl MemoryStore {
         Ok(())
     }
 
-    fn next_trace_id(&self, trace: &Trace) -> String {
+    fn next_trace_id(&self, trace: &Trace, batch_index: usize) -> String {
         let seed = format!(
             "{}:{}:{}:{}",
-            self.records.len() + 1,
+            self.records.len() + 1 + batch_index,
             trace.created_at_ms,
             trace.kind,
             trace.content

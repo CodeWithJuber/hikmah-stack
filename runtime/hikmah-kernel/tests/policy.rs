@@ -40,6 +40,10 @@ fn defaults_are_the_constants_recall_used_before() {
     assert_eq!(policy.working_set_limit, 12);
     assert_eq!(policy.minimum_recall_score, 0.12);
     assert!(!policy.allow_sensitive_persistence);
+    assert_eq!(
+        policy.calibration_min_outcomes,
+        hikmah_kernel::calibration::MIN_OUTCOMES
+    );
     policy.validate().unwrap();
 }
 
@@ -76,6 +80,8 @@ fn missing_fields_keep_defaults_and_bad_fields_are_rejected() {
         r#"{"recall": {"cue_lexical": 0.9, "cue_tag": 0.2}}"#,
         r#"{"recall": {"relevance_base": 1, "metadata_share": 1}}"#,
         r#"{"consolidation_min_support": 0}"#,
+        // At 0, a family with no outcomes would be measurable.
+        r#"{"calibration_min_outcomes": 0}"#,
         r#"{"consolidation_min_independent_sources": 0}"#,
         // Data cannot lift the sensitive-persistence hard block.
         r#"{"allow_sensitive_persistence": true}"#,

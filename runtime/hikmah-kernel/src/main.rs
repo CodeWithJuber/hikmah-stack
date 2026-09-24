@@ -1,9 +1,8 @@
 use clap::{Parser, Subcommand};
+use hikmah_kernel::calibration::FamilyFilter;
 use hikmah_kernel::council::{deliberate, DeliberationInput};
-use hikmah_kernel::decision::{evaluate, DecisionFrame};
-use hikmah_kernel::decision_port::{
-    ask, DecisionEngine, DecisionRequest, NoEngine, Question, QuestionKind,
-};
+use hikmah_kernel::decision::{estimate_missing_criteria, evaluate, DecisionFrame};
+use hikmah_kernel::decision_port::{ask, DecisionEngine, DecisionRequest, Forecast, NoEngine};
 use hikmah_kernel::hook::{
     explain_batch, explain_stop_event, run_stop_hook_recording, DEFAULT_ENGINE_THRESHOLD,
 };
@@ -142,13 +141,21 @@ enum Command {
         #[arg(long)]
         problem: PathBuf,
     },
-    /// Rank a decision frame. With `--engine`, options that have a `description` get missing
-    /// criteria estimated by the engine (ranked, but never counted as evidence).
+    /// Rank a decision frame. With `--engine`, options that have a `description` and no hard
+    /// block get missing criteria estimated by the engine in one request (ranked, but never
+    /// counted as evidence). A rejected or timed-out request leaves every estimate in it
+    /// unscored; `HIKMAH_JEV_TIMEOUT_MS` sets the engine's time budget per request.
     Decide {
         #[arg(long)]
         frame: PathBuf,
         #[arg(long, default_value = "none")]
         engine: String,
+        /// Record every admitted estimate as an unverified `prediction` trace (family
+        /// `decide.<criterion>`), in one batch. Needs an engine.
+        #[arg(long)]
+        record: bool,
+        #[arg(long, default_value = DEFAULT_STORE)]
+        store: PathBuf,
     },
     Deliberate {
         #[arg(long, default_value_t = 0)]
@@ -174,13 +181,47 @@ enum Command {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
     },
+    /// Record a person's or agent's forecast as a `prediction` trace, so `calibration` scores it
+    /// beside any engine on the same family. It is never verified; `outcome` resolves it.
+    Predict {
+        #[arg(long, default_value = DEFAULT_STORE)]
+        store: PathBuf,
+        /// Calibration bucket, for example `site.hero.ctr` or `decide.perf`.
+        #[arg(long)]
+        family: String,
+        /// What is being forecast, in words.
+        #[arg(long)]
+        question: String,
+        /// `noul` (yes/no), `choice`, or `score`.
+        #[arg(long = "type", value_name = "noul|choice|score")]
+        kind: String,
+        /// Noul: probability of `true`. Choice and score: probability of `--value`.
+        #[arg(long)]
+        p: f64,
+        /// Choice and score: the forecast answer, one of `--answer-space`.
+        #[arg(long)]
+        value: Option<String>,
+        /// Choice: the option ids. Score: the levels, lowest first (use `0,1,2,3,4` to share a
+        /// family with engine score questions, which record level indices). Comma-separated.
+        #[arg(long, value_delimiter = ',')]
+        answer_space: Vec<String>,
+        /// Who forecast, as `<kind>:<name>`: for example `human:alex` or `agent:planner`. Not a
+        /// `model:` source.
+        #[arg(long)]
+        source: String,
+        /// Where the forecast was made, for example `DECISIONS.md#hero`.
+        #[arg(long)]
+        locator: Option<String>,
+    },
     /// Record the observed outcome of a prediction (from a non-model principal).
     Outcome {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
         #[arg(long)]
         prediction: String,
-        /// `true`/`false` for noul, the option id for choice, the level index for score.
+        /// One of the prediction's answer space: `true`/`false` for noul, the option id for
+        /// choice, and for score the level as recorded (a level index for engine answers, the
+        /// level name for a forecast recorded with named levels).
         #[arg(long)]
         observed: String,
         #[arg(long)]
@@ -188,12 +229,16 @@ enum Command {
         #[arg(long)]
         note: Option<String>,
     },
-    /// Calibration of recorded predictions against outcomes.
+    /// Calibration of recorded predictions against outcomes, per forecaster and family. Rows
+    /// below the policy's `calibration_min_outcomes` are labelled `anecdotal`.
     Calibration {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "family_prefix")]
         family: Option<String>,
+        /// Every family starting with this prefix, plus one pooled row per forecaster.
+        #[arg(long)]
+        family_prefix: Option<String>,
     },
     /// Truth Gate Stop hook. Engine via HIKMAH_HOOK_ENGINE=jev (needs TYPESAFE_API_KEY);
     /// threshold via HIKMAH_HOOK_THRESHOLD (default 0.6, measured in harness-bench).
@@ -332,7 +377,7 @@ fn run() -> Result<()> {
             let mut trace = Trace::new(TraceKind::from_str(&kind)?, content, source);
             if trace.kind == TraceKind::Prediction {
                 return Err(KernelError::Invalid(
-                    "predictions are recorded through `hikmah ask --record`".into(),
+                    "predictions are recorded with `hikmah predict` (people and agents) or `hikmah ask --record` / `hikmah decide --record` (engines)".into(),
                 ));
             }
             trace.tags = tags;
@@ -421,16 +466,40 @@ fn run() -> Result<()> {
             let problem: PlanProblem = serde_json::from_str(&text)?;
             print_json(&plan(&problem)?)?;
         }
-        Command::Decide { frame, engine } => {
+        Command::Decide {
+            frame,
+            engine,
+            record,
+            store,
+        } => {
             let text = fs::read_to_string(frame)?;
             let mut frame: DecisionFrame = serde_json::from_str(&text)?;
             if engine.trim().eq_ignore_ascii_case("none") {
+                if record {
+                    return Err(KernelError::Invalid(
+                        "`--record` stores engine estimates; pass `--engine jev`".into(),
+                    ));
+                }
                 print_json(&evaluate(&frame)?)?;
             } else {
                 let engine = select_engine(&engine)?;
-                let estimates = estimate_missing_criteria(engine.as_ref(), &mut frame)?;
+                // A bad policy file fails before the engine is called, not after.
+                let record_policy = if record { Some(policy()?) } else { None };
+                let estimation = estimate_missing_criteria(engine.as_ref(), &mut frame)?;
                 let result = evaluate(&frame)?;
-                print_json(&json!({"decision": result, "model_estimates": estimates}))?;
+                let recorded = match record_policy {
+                    Some(policy) => MemoryStore::open(store, policy)?
+                        .remember_many(estimation.prediction_traces())?,
+                    None => Vec::new(),
+                };
+                let recorded: Vec<String> = recorded.into_iter().map(|(t, _)| t.id).collect();
+                print_json(&json!({
+                    "decision": result,
+                    "model_estimates": estimation.estimates,
+                    "skipped_blocked": estimation.skipped_blocked,
+                    "engine_requests": estimation.exchanges.len(),
+                    "recorded_predictions": recorded,
+                }))?;
             }
         }
         Command::Deliberate {
@@ -459,15 +528,40 @@ fn run() -> Result<()> {
             let request: DecisionRequest = serde_json::from_str(&text)?;
             let engine = select_engine(&engine)?;
             let decision = ask(engine.as_ref(), &request)?;
-            let mut recorded = Vec::new();
-            if record {
+            let recorded = if record {
                 let mut memory = MemoryStore::open(store, policy()?)?;
-                for trace in decision.prediction_traces(&request) {
-                    let (trace, _) = memory.remember(trace)?;
-                    recorded.push(trace.id);
-                }
-            }
+                memory.remember_many(decision.prediction_traces(&request))?
+            } else {
+                Vec::new()
+            };
+            let recorded: Vec<String> = recorded.into_iter().map(|(t, _)| t.id).collect();
             print_json(&json!({"decision": decision, "recorded_predictions": recorded}))?;
+        }
+        Command::Predict {
+            store,
+            family,
+            question,
+            kind,
+            p,
+            value,
+            answer_space,
+            source,
+            locator,
+        } => {
+            let trace = Forecast {
+                family,
+                question,
+                kind,
+                p,
+                value,
+                answer_space,
+                source,
+                locator,
+            }
+            .into_trace()?;
+            let mut memory = MemoryStore::open(store, policy()?)?;
+            let (trace, _) = memory.remember(trace)?;
+            print_json(&trace)?;
         }
         Command::Outcome {
             store,
@@ -486,9 +580,18 @@ fn run() -> Result<()> {
             let (trace, _) = memory.remember(trace)?;
             print_json(&trace)?;
         }
-        Command::Calibration { store, family } => {
+        Command::Calibration {
+            store,
+            family,
+            family_prefix,
+        } => {
             let memory = MemoryStore::open_existing(store, policy()?)?;
-            print_json(&memory.calibration(family.as_deref()))?;
+            let filter = match (&family, &family_prefix) {
+                (Some(family), _) => FamilyFilter::Exact(family),
+                (None, Some(prefix)) => FamilyFilter::Prefix(prefix),
+                (None, None) => FamilyFilter::All,
+            };
+            print_json(&memory.calibration_report(filter))?;
         }
         Command::Hook => {
             let (engine, threshold) = hook_settings();
@@ -542,75 +645,4 @@ fn run() -> Result<()> {
         }
     }
     Ok(())
-}
-
-const SCORE_LEVELS: [&str; 5] = ["very poor", "poor", "fair", "good", "excellent"];
-
-/// Ask the engine to estimate criteria an option has no evidence for, from its description.
-fn estimate_missing_criteria(
-    engine: &dyn DecisionEngine,
-    frame: &mut DecisionFrame,
-) -> Result<Vec<serde_json::Value>> {
-    let mut estimates = Vec::new();
-    let criteria = frame.criteria.clone();
-    let question_text = frame.question.clone();
-    for option in &mut frame.options {
-        let Some(description) = option.description.clone() else {
-            continue;
-        };
-        let missing: Vec<(usize, &hikmah_kernel::decision::Criterion)> = criteria
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| {
-                !option.scores.contains_key(&c.id) && !option.model_scores.contains_key(&c.id)
-            })
-            .collect();
-        if missing.is_empty() {
-            continue;
-        }
-        let questions = missing
-            .iter()
-            .map(|(index, criterion)| Question {
-                id: format!("c{index}"),
-                instructions: format!(
-                    "Rate this option on: {} ({})",
-                    criterion.description, criterion.id
-                ),
-                kind: QuestionKind::Score {
-                    levels: SCORE_LEVELS.iter().map(|s| s.to_string()).collect(),
-                },
-                family: Some(format!("decide.{}", criterion.id)),
-            })
-            .collect();
-        let request = DecisionRequest::new(
-            format!(
-                "Decision: {question_text}\nOption: {}\n{description}",
-                option.name
-            ),
-            questions,
-        )?;
-        let decision = ask(engine, &request)?;
-        for (index, criterion) in missing {
-            let answer = decision.answer(&format!("c{index}"));
-            match answer.and_then(|a| a.normalized_score()) {
-                Some(score) => {
-                    option.model_scores.insert(criterion.id.clone(), score);
-                    estimates.push(json!({
-                        "option": option.name,
-                        "criterion": criterion.id,
-                        "score": score,
-                        "engine": decision.engine.source(),
-                        "calibrated": false,
-                    }));
-                }
-                None => estimates.push(json!({
-                    "option": option.name,
-                    "criterion": criterion.id,
-                    "score": null,
-                    "reason": decision.rejected.clone().unwrap_or_else(|| "abstained".into()),
-                })),
-            }
-        }
-    }
-    Ok(estimates)
 }

@@ -1,4 +1,7 @@
-//! Kernel policy: every tunable limit, threshold, and recall weight, as data.
+//! Kernel policy: memory limits, recall and consolidation thresholds, every recall weight, and
+//! the calibration sample minimum, as data. The decision, council, planner, and statistical
+//! constants (for example `decision::REVERSIBILITY_BAND` or `calibration::Z_CRITICAL`) are
+//! code, not policy.
 //!
 //! The defaults are the shipped design choices (none of them is calibrated). A JSON policy file
 //! (`hikmah --policy <file>` or `HIKMAH_POLICY`) may override any subset of fields; missing fields
@@ -20,6 +23,9 @@ pub struct KernelPolicy {
     pub consolidation_min_independent_sources: usize,
     /// Consolidation proposals below this blended confidence are never eligible for promotion.
     pub consolidation_min_confidence: f32,
+    /// Scored outcomes a calibration row needs to be `measurable` (see `calibration.rs`); below
+    /// it, its Brier is reported as `anecdotal`.
+    pub calibration_min_outcomes: usize,
     /// Recall scoring weights (see `recall.rs`).
     pub recall: RecallWeights,
 }
@@ -34,6 +40,7 @@ impl Default for KernelPolicy {
             consolidation_min_support: 2,
             consolidation_min_independent_sources: 2,
             consolidation_min_confidence: 0.6,
+            calibration_min_outcomes: crate::calibration::MIN_OUTCOMES,
             recall: RecallWeights::default(),
         }
     }
@@ -185,6 +192,12 @@ impl KernelPolicy {
             return bad(
                 "minimum_recall_score",
                 "must be above 0 (at 0, a trace with no matching cue would be recalled)",
+            );
+        }
+        if self.calibration_min_outcomes == 0 {
+            return bad(
+                "calibration_min_outcomes",
+                "must be at least 1 (at 0, a family with no outcomes would be measurable)",
             );
         }
         if self.consolidation_min_support == 0 || self.consolidation_min_independent_sources == 0 {

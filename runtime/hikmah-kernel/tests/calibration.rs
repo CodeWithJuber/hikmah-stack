@@ -1,14 +1,21 @@
 mod common;
 
 use common::temp_store;
-use hikmah_kernel::calibration::{spiegelhalter_z, FamilyCalibration, MIN_OUTCOMES};
+use hikmah_kernel::calibration::{
+    spiegelhalter_z, FamilyCalibration, FamilyFilter, ENGINE_FORECASTER, MIN_OUTCOMES, POOLED_KIND,
+    PRINCIPAL_FORECASTER, Z_CRITICAL,
+};
 use hikmah_kernel::decision_port::{
-    ask, DecisionRequest, EngineDescriptor, Question, QuestionKind, RawAnswer, StaticEngine,
+    ask, DecisionRequest, EngineDescriptor, Forecast, Question, QuestionKind, RawAnswer,
+    StaticEngine,
 };
 use hikmah_kernel::policy::KernelPolicy;
 use hikmah_kernel::trace::{OutcomeRecord, Trace, TraceKind};
 use hikmah_kernel::MemoryStore;
+use serde_json::Value;
 use std::collections::BTreeMap;
+use std::path::Path;
+use std::process::Command;
 
 fn engine(answer: RawAnswer, question: &str) -> StaticEngine {
     StaticEngine {
@@ -164,4 +171,479 @@ fn spiegelhalter_z_is_undefined_without_variance() {
     assert!(spiegelhalter_z(&[(0.5, 1.0), (0.5, 0.0)]).is_none());
     assert!(spiegelhalter_z(&[(1.0, 1.0), (0.0, 0.0)]).is_none());
     assert!(spiegelhalter_z(&[]).is_none());
+}
+
+/// Store `prediction` and, when given, an outcome for it.
+fn record(store: &mut MemoryStore, prediction: Trace, observed: Option<&str>) {
+    let (prediction, _) = store.remember(prediction).unwrap();
+    if let Some(observed) = observed {
+        let mut outcome = Trace::new(TraceKind::Outcome, "observed in analytics", "analytics");
+        outcome.outcome = Some(OutcomeRecord {
+            prediction_id: prediction.id,
+            observed: observed.to_string(),
+        });
+        store.remember(outcome).unwrap();
+    }
+}
+
+/// The fixture engine's answer to one noul question in `family`, as a prediction trace.
+fn engine_noul(family: &str, p: f64) -> Trace {
+    let mut question = Question::noul("lift", "Does this raise plan clicks?");
+    question.family = Some(family.into());
+    let request = DecisionRequest::new("Hero layout change.", vec![question]).unwrap();
+    let decision = ask(&engine(RawAnswer::Noul { noul: p }, "lift"), &request).unwrap();
+    decision.prediction_traces(&request).remove(0)
+}
+
+fn human_noul(family: &str, p: f64) -> Trace {
+    Forecast {
+        family: family.into(),
+        question: "Does this raise plan clicks?".into(),
+        kind: "noul".into(),
+        p,
+        value: None,
+        answer_space: Vec::new(),
+        source: "human:juber".into(),
+        locator: None,
+    }
+    .into_trace()
+    .unwrap()
+}
+
+fn close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-9
+}
+
+#[test]
+fn a_principal_named_after_an_engine_never_shares_its_row() {
+    // Review repro: a non-model forecast whose source is the engine's own name. The trace is
+    // valid (its record names its source), but its source is not `model:`, so it is scored as a
+    // principal, apart from the engine it is named after.
+    let jev = |p: f64| {
+        let mut question = Question::noul("lift", "Does this raise plan clicks?");
+        question.family = Some("truth_gate.fail".into());
+        let request = DecisionRequest::new("Hero layout change.", vec![question]).unwrap();
+        let mut engine = engine(RawAnswer::Noul { noul: p }, "lift");
+        engine.descriptor = EngineDescriptor {
+            name: "jev".into(),
+            version: "jev-1.13.0".into(),
+        };
+        ask(&engine, &request)
+            .unwrap()
+            .prediction_traces(&request)
+            .remove(0)
+    };
+    let mut impostor = human_noul("truth_gate.fail", 0.9);
+    impostor.provenance.source = "jev@jev-1.13.0".into();
+    impostor.prediction.as_mut().unwrap().engine = "jev@jev-1.13.0".into();
+    impostor.validate().unwrap();
+    assert!(!impostor.is_model_authored());
+
+    let mut store = MemoryStore::open(temp_store("impostor"), KernelPolicy::default()).unwrap();
+    record(&mut store, jev(0.2), Some("false"));
+    record(&mut store, jev(0.3), Some("false"));
+    record(&mut store, impostor, Some("false"));
+
+    let report = store.calibration_report(FamilyFilter::Prefix("truth_gate"));
+    let rows: Vec<(&str, &str, usize)> = report
+        .families
+        .iter()
+        .map(|f| (f.engine.as_str(), f.forecaster_kind, f.n))
+        .collect();
+    let expected = vec![
+        ("jev@jev-1.13.0", ENGINE_FORECASTER, 2),
+        ("jev@jev-1.13.0", PRINCIPAL_FORECASTER, 1),
+    ];
+    assert_eq!(rows, expected, "one row per class, never merged");
+    assert!(close(report.families[0].brier, (0.04 + 0.09) / 2.0));
+    let pooled: Vec<(&str, &str, usize)> = report
+        .pooled
+        .iter()
+        .map(|f| (f.engine.as_str(), f.forecaster_kind, f.n))
+        .collect();
+    assert_eq!(pooled, expected, "pooling keeps the classes apart too");
+}
+
+#[test]
+fn people_and_engines_are_scored_side_by_side_per_family() {
+    let mut store = MemoryStore::open(temp_store("side-by-side"), KernelPolicy::default()).unwrap();
+    record(
+        &mut store,
+        engine_noul("hostlelo.pricing.ctr", 0.9),
+        Some("true"),
+    );
+    record(
+        &mut store,
+        human_noul("hostlelo.pricing.ctr", 0.3),
+        Some("false"),
+    );
+    record(
+        &mut store,
+        engine_noul("hostlelo.hero.ctr", 0.8),
+        Some("true"),
+    );
+    record(
+        &mut store,
+        engine_noul("hostlelo.hero.ctr", 0.6),
+        Some("false"),
+    );
+    record(
+        &mut store,
+        human_noul("hostlelo.hero.ctr", 0.7),
+        Some("true"),
+    );
+
+    let report = store.calibration(None);
+    let rows: Vec<(&str, &str)> = report
+        .families
+        .iter()
+        .map(|f| (f.family.as_str(), f.engine.as_str()))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("hostlelo.hero.ctr", "fixture@1"),
+            ("hostlelo.hero.ctr", "human:juber"),
+            ("hostlelo.pricing.ctr", "fixture@1"),
+            ("hostlelo.pricing.ctr", "human:juber"),
+        ],
+        "every forecaster's row for a family is adjacent"
+    );
+    let (engine_row, human_row) = (&report.families[0], &report.families[1]);
+    assert_eq!(engine_row.n, 2);
+    assert!(close(engine_row.brier, 0.2), "{engine_row:?}");
+    assert_eq!(human_row.n, 1);
+    assert!(close(human_row.brier, 0.09), "{human_row:?}");
+    // Far below the minimum: the Brier is shown with its n, labelled anecdotal.
+    for row in &report.families {
+        assert_eq!(row.evidence, "anecdotal");
+        assert!(!row.measurable && !row.calibrated);
+        assert!(
+            close(row.top_label_brier, row.brier),
+            "noul: the same number"
+        );
+    }
+    assert!(
+        report.pooled.is_empty(),
+        "pooling is asked for with a prefix"
+    );
+}
+
+#[test]
+fn a_family_prefix_pools_each_forecaster_across_families() {
+    let mut store = MemoryStore::open(temp_store("pooled"), KernelPolicy::default()).unwrap();
+    record(
+        &mut store,
+        engine_noul("hostlelo.hero.ctr", 0.8),
+        Some("true"),
+    );
+    // Leans `false` at P(true) = 0.2 and is right: top label 0.8, hit.
+    record(
+        &mut store,
+        human_noul("hostlelo.hero.ctr", 0.2),
+        Some("false"),
+    );
+    record(&mut store, human_noul("hostlelo.hero.ctr", 0.9), None);
+    record(&mut store, human_noul("other.team.ctr", 0.9), Some("false"));
+    record(&mut store, human_noul("other.team.ctr", 0.9), None);
+
+    // A score family: level 3 at P = 0.6, and level 3 happened.
+    let request = DecisionRequest::new(
+        "Hero layout change.",
+        vec![Question {
+            id: "perf".into(),
+            instructions: "How fast is the hero on mid-range mobile?".into(),
+            kind: QuestionKind::Score {
+                levels: ["very poor", "poor", "fair", "good", "excellent"]
+                    .map(String::from)
+                    .to_vec(),
+            },
+            family: Some("hostlelo.perf".into()),
+        }],
+    )
+    .unwrap();
+    let answer = RawAnswer::Score {
+        score: 2.6,
+        probabilities: Some(BTreeMap::from([("3".into(), 0.6), ("2".into(), 0.4)])),
+        confidence: None,
+    };
+    let decision = ask(&engine(answer, "perf"), &request).unwrap();
+    record(
+        &mut store,
+        decision.prediction_traces(&request).remove(0),
+        Some("3"),
+    );
+
+    let report = store.calibration_report(FamilyFilter::Prefix("hostlelo."));
+    assert_eq!(report.family_prefix.as_deref(), Some("hostlelo."));
+    assert_eq!(report.unresolved_predictions, 1, "only matching families");
+    assert!(report
+        .families
+        .iter()
+        .all(|f| f.family.starts_with("hostlelo.")));
+    let perf = report
+        .families
+        .iter()
+        .find(|f| f.family == "hostlelo.perf")
+        .unwrap();
+    assert!(close(perf.brier, 0.32), "multiclass: {perf:?}");
+    assert!(close(perf.top_label_brier, 0.16), "{perf:?}");
+
+    let pooled: Vec<(&str, usize)> = report
+        .pooled
+        .iter()
+        .map(|row| (row.engine.as_str(), row.n))
+        .collect();
+    assert_eq!(pooled, vec![("fixture@1", 2), ("human:juber", 1)]);
+    let engine_pool = &report.pooled[0];
+    assert_eq!(engine_pool.family, "hostlelo.*");
+    assert_eq!(engine_pool.answer_kind, POOLED_KIND);
+    assert_eq!(
+        engine_pool.pooled_families,
+        vec!["hostlelo.hero.ctr", "hostlelo.perf"]
+    );
+    // Top-label pairs (0.8, hit) and (0.6, hit).
+    assert!(close(engine_pool.brier, 0.1), "{engine_pool:?}");
+    assert_eq!(engine_pool.evidence, "anecdotal");
+    let human_pool = &report.pooled[1];
+    assert!(close(human_pool.brier, 0.04), "{human_pool:?}");
+    assert!(close(human_pool.rate, 1.0));
+}
+
+/// `count` engine forecasts at `p` in one family, `true_count` of which came true.
+fn record_many(store: &mut MemoryStore, batches: &[(f64, usize, usize)]) {
+    for &(p, count, true_count) in batches {
+        for i in 0..count {
+            let observed = if i < true_count { "true" } else { "false" };
+            record(store, engine_noul("hostlelo.hero.ctr", p), Some(observed));
+        }
+    }
+}
+
+fn policy_with_min(calibration_min_outcomes: usize) -> KernelPolicy {
+    KernelPolicy {
+        calibration_min_outcomes,
+        ..KernelPolicy::default()
+    }
+}
+
+#[test]
+fn the_policy_sets_how_many_outcomes_make_a_family_measurable() {
+    let path = temp_store("min-outcomes");
+    let mut store = MemoryStore::open(&path, KernelPolicy::default()).unwrap();
+    // Exactly calibrated at both levels, and informative.
+    record_many(&mut store, &[(0.2, 10, 2), (0.8, 10, 8)]);
+    let default = store.calibration(None);
+    assert_eq!(default.min_outcomes, MIN_OUTCOMES);
+    let family = &default.families[0];
+    assert_eq!((family.n, family.evidence), (20, "anecdotal"));
+    assert!(
+        close(family.brier, 0.16),
+        "reported, not hidden: {family:?}"
+    );
+    assert!(!family.measurable && !family.calibrated);
+
+    let report = MemoryStore::open_existing(&path, policy_with_min(20))
+        .unwrap()
+        .calibration(None);
+    assert_eq!(report.min_outcomes, 20);
+    let family = &report.families[0];
+    assert_eq!(family.evidence, "measurable");
+    assert!(family.measurable, "{family:?}");
+    // Both tests pass, but a policy cannot lower the verdict's own floor of MIN_OUTCOMES.
+    assert!(family.z.unwrap().abs() < Z_CRITICAL && family.brier_skill.unwrap() > 0.0);
+    assert!(
+        !family.calibrated,
+        "20 outcomes cannot be certified: {family:?}"
+    );
+
+    // The same pattern at 50 outcomes is calibrated by default, and a stricter policy can still
+    // hold the verdict back.
+    record_many(&mut store, &[(0.2, 15, 3), (0.8, 15, 12)]);
+    let family = &store.calibration(None).families[0];
+    assert_eq!(family.n, MIN_OUTCOMES);
+    assert!(family.measurable && family.calibrated, "{family:?}");
+    let family = &MemoryStore::open_existing(&path, policy_with_min(60))
+        .unwrap()
+        .calibration(None)
+        .families[0];
+    assert_eq!(family.evidence, "anecdotal");
+    assert!(!family.measurable && !family.calibrated, "{family:?}");
+}
+
+fn hikmah(args: &[&str]) -> (bool, Value, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_hikmah"))
+        .args(args)
+        .env_remove("HIKMAH_POLICY")
+        .env_remove("TYPESAFE_API_KEY")
+        .output()
+        .unwrap();
+    let stdout = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
+    (
+        output.status.success(),
+        stdout,
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn the_cli_records_forecasts_and_pools_their_calibration() {
+    let store = temp_store("predict-cli");
+    let store = store.to_str().unwrap();
+    let predict = |extra: &[&str]| {
+        let mut args = vec![
+            "predict",
+            "--store",
+            store,
+            "--question",
+            "Does the plan-finder hero raise plan clicks?",
+            "--source",
+            "human:juber",
+        ];
+        args.extend_from_slice(extra);
+        hikmah(&args)
+    };
+    let outcome = |id: &str, observed: &str| {
+        let (ok, _, stderr) = hikmah(&[
+            "outcome",
+            "--store",
+            store,
+            "--prediction",
+            id,
+            "--observed",
+            observed,
+            "--source",
+            "analytics",
+        ]);
+        assert!(ok, "{stderr}");
+    };
+
+    let (ok, noul, stderr) = predict(&[
+        "--family",
+        "hostlelo.hero.ctr",
+        "--type",
+        "noul",
+        "--p",
+        "0.7",
+        "--locator",
+        "DECISIONS.md#hero",
+    ]);
+    assert!(ok, "{stderr}");
+    assert_eq!(noul["prediction"]["engine"], "human:juber");
+    assert_eq!(noul["provenance"]["verified"], false);
+    outcome(noul["id"].as_str().unwrap(), "true");
+    let (ok, choice, stderr) = predict(&[
+        "--family",
+        "hostlelo.plan.pick",
+        "--type",
+        "choice",
+        "--p",
+        "0.6",
+        "--value",
+        "starter",
+        "--answer-space",
+        "starter,pro,business",
+    ]);
+    assert!(ok, "{stderr}");
+    assert_eq!(
+        choice["prediction"]["answer_space"],
+        serde_json::json!(["starter", "pro", "business"])
+    );
+    outcome(choice["id"].as_str().unwrap(), "pro");
+
+    let (ok, report, stderr) = hikmah(&[
+        "calibration",
+        "--store",
+        store,
+        "--family-prefix",
+        "hostlelo.",
+    ]);
+    assert!(ok, "{stderr}");
+    assert_eq!(report["families"].as_array().unwrap().len(), 2);
+    let pooled = &report["pooled"][0];
+    assert_eq!(pooled["engine"], "human:juber");
+    assert_eq!(pooled["forecaster_kind"], PRINCIPAL_FORECASTER);
+    assert_eq!(pooled["n"], 2);
+    assert_eq!(pooled["evidence"], "anecdotal");
+    // (0.7 − 1)² and (0.6 − 0)², averaged.
+    assert!(close(pooled["brier"].as_f64().unwrap(), 0.225), "{pooled}");
+
+    let policy = Path::new(store).with_file_name("policy.json");
+    std::fs::write(&policy, r#"{"calibration_min_outcomes": 2}"#).unwrap();
+    let (ok, report, stderr) = hikmah(&[
+        "--policy",
+        policy.to_str().unwrap(),
+        "calibration",
+        "--store",
+        store,
+        "--family-prefix",
+        "hostlelo.",
+    ]);
+    assert!(ok, "{stderr}");
+    assert_eq!(report["min_outcomes"], 2);
+    assert_eq!(report["pooled"][0]["evidence"], "measurable");
+
+    // Refusals: an engine source, a source named like an engine, a prediction through
+    // `remember`, both filters at once.
+    for (source, message) in [
+        ("model:jev@1", "record them with"),
+        ("jev@jev-1.13.0", "must be `<kind>:<name>`"),
+    ] {
+        let (ok, _, stderr) = hikmah(&[
+            "predict",
+            "--store",
+            store,
+            "--family",
+            "hostlelo.hero.ctr",
+            "--question",
+            "Does the hero raise plan clicks?",
+            "--type",
+            "noul",
+            "--p",
+            "0.7",
+            "--source",
+            source,
+        ]);
+        assert!(!ok && stderr.contains(message), "{source}: {stderr}");
+    }
+    let (ok, _, stderr) = hikmah(&[
+        "remember",
+        "--store",
+        store,
+        "--kind",
+        "prediction",
+        "--content",
+        "clicks rise",
+    ]);
+    assert!(!ok && stderr.contains("hikmah predict"), "{stderr}");
+    let (ok, _, _) = hikmah(&[
+        "calibration",
+        "--store",
+        store,
+        "--family",
+        "a",
+        "--family-prefix",
+        "b",
+    ]);
+    assert!(!ok);
+}
+
+#[test]
+fn the_cli_refuses_to_record_a_decision_without_an_engine() {
+    let store = temp_store("decide-cli");
+    let frame = store.with_file_name("frame.json");
+    std::fs::write(
+        &frame,
+        r#"{"question": "q", "criteria": [{"id": "value", "weight": 1, "description": "value"}],
+            "options": [{"name": "a", "description": "An option.", "evidence_confidence": 0.5}]}"#,
+    )
+    .unwrap();
+    let frame = frame.to_str().unwrap();
+    let store = store.to_str().unwrap();
+    let (ok, _, stderr) = hikmah(&["decide", "--frame", frame, "--record", "--store", store]);
+    assert!(!ok && stderr.contains("--engine"), "{stderr}");
+    assert!(!Path::new(store).exists(), "nothing was written");
+    let (ok, result, stderr) = hikmah(&["decide", "--frame", frame]);
+    assert!(ok, "{stderr}");
+    assert_eq!(result["recommended"], "a");
 }
