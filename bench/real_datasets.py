@@ -77,6 +77,7 @@ def prepare(directory):
     for name, url in SOURCES.items():
         path = raw / name
         if not path.exists():
+            print("Downloading " + name + " from " + url, flush=True)
             request = urllib.request.Request(url, headers={"User-Agent": "Hikmah-public-benchmark/1"})
             with urllib.request.urlopen(request, timeout=90) as response:
                 data = response.read(32 * 1024 * 1024 + 1)
@@ -204,6 +205,7 @@ class Kernel:
             self.process.kill()
             self.process.wait()
         self.selector.close()
+        self.process.stdout.close()
 
 
 def decoded(answer, labels):
