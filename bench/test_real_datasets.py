@@ -55,6 +55,15 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(bench.quantile([1, 1, 1, 1, 600, 700], .5), 1)
         self.assertGreater(bench.quantile([1, 1, 1, 1, 600, 700], .95), 600)
 
+    def test_persistent_api_cap_stops_before_network(self):
+        with sqlite3.connect(":memory:") as db:
+            db.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
+            db.execute("INSERT INTO meta VALUES('attempts','20')")
+            with patch.object(bench.urllib.request, "urlopen") as network:
+                with self.assertRaises(bench.StopRun):
+                    bench.call_jev(db, {}, "unused-placeholder", SimpleNamespace(max_calls=20))
+                network.assert_not_called()
+
 
 @unittest.skipUnless(BINARY.exists(), "compile real_bench_port before integration tests")
 class KernelTests(unittest.TestCase):

@@ -10,7 +10,7 @@ through the actual Rust kernel. It does not train or tune anything on these labe
 |---|---|---|---|
 | BANKING77 | Fine-grained banking intent, 77 classes | Official test: 3,080 | CC BY 4.0 |
 | CLINC150 | 150 intents and out-of-scope detection | Official test + oos_test: 5,500 | CC BY 3.0 |
-| UCI SMS Spam | Spam / legitimate SMS | Full unsplit public corpus, about 5,574; actual parsed count recorded | CC BY 4.0 |
+| UCI SMS Spam | Spam / legitimate SMS | Full unsplit public corpus: 5,574 | CC BY 4.0 |
 | BoolQ | Yes/no reading comprehension | Labeled development split: 3,270; no tuning on it | CC BY-SA 3.0 |
 
 Sources and citations:
@@ -20,12 +20,15 @@ Sources and citations:
 - [SMS Spam](https://archive.ics.uci.edu/dataset/228/sms+spam+collection): Almeida and Hidalgo (2011), DOI `10.24432/C5CC84`.
 - [BoolQ](https://github.com/google-research-datasets/boolean-questions): Clark et al., *BoolQ: Exploring the Surprising Difficulty of Natural Yes/No Questions* (2019), downloaded through the [SuperGLUE v2 distribution](https://dl.fbaipublicfiles.com/glue/superglue/data/v2/BoolQ.zip). The original Google bucket returned HTTP 403 during validation.
 
+Total: **17,424 labeled examples**. [The full offline run](https://github.com/CodeWithJuber/hikmah-stack/actions/runs/36192415007) completed on 2026-09-25 UTC with no remote API calls. NoEngine answered none, as expected; this is a control result, not semantic accuracy evidence for Jev.
+
 Downloads and derived evaluation records retain source attribution in
 `manifest.json`. Upstream data is not committed to this repository. BANKING and
 CLINC use immutable Git revisions. Every downloaded file and prepared corpus gets
-a SHA-256 checksum. Subsequent preparation rejects changed cached source files.
-SMS/BoolQ first-download hashes identify the exact snapshots; retain the manifest
-when sharing a result. Duplicate texts are counted and retained, not quietly removed.
+a SHA-256 checksum. The five exact source hashes measured in the full offline run
+are pinned in the runner, including SMS and BoolQ; changed downloads are refused.
+Retain the manifest when sharing a result. Duplicate texts are counted and retained,
+not quietly removed.
 
 ## What each column means
 

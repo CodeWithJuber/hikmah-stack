@@ -35,6 +35,13 @@ SOURCES = {
     "sms.zip": "https://archive.ics.uci.edu/static/public/228/sms+spam+collection.zip",
     "boolq.zip": "https://dl.fbaipublicfiles.com/glue/superglue/data/v2/BoolQ.zip",
 }
+SOURCE_SHA256 = {
+    "bank_categories.json": "53261da888122daf2d120d925458631d9619e15d82e56052e7a42e535ce32b63",
+    "bank_test.csv": "d12d6e3bc4c3103966ae786dc435913c0c563dfa328f5a3646d0e62cfeeb474d",
+    "clinc.json": "36923c3705a59e08fe9c3883d8bc2dd966ef93e22cb78ac41171782a698d56e0",
+    "sms.zip": "1587ea43e58e82b14ff1f5425c88e17f8496bfcdb67a583dbff9eefaf9963ce3",
+    "boolq.zip": "853fbe7922f70c59629f06a39e8d9ca440c3d740e760fd3b87a5ddf3dcba2436",
+}
 ATTRIBUTION = {
     "banking77": {"source": "https://github.com/PolyAI-LDN/task-specific-datasets", "revision": POLY,
                   "license": "CC-BY-4.0", "authors": "Casanueva et al., Efficient Intent Detection with Dual Sentence Encoders (2020)", "split": "official test"},
@@ -85,6 +92,8 @@ def prepare(directory):
                 raise ValueError("Dataset exceeds download bound: " + name)
             path.write_bytes(data)
         digest = sha(path.read_bytes())
+        if digest != SOURCE_SHA256[name]:
+            raise ValueError("Source does not match the validated snapshot: " + name)
         old = previous.get("sources", {}).get(name)
         if old and (old["sha256"] != digest or old["url"] != url):
             raise ValueError("Dataset changed since preparation: " + name)
