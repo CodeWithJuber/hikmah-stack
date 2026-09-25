@@ -1,0 +1,40 @@
+name: compare Jev and Hikmah
+
+on:
+  push:
+    branches: [benchmark/jev-hikmah]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+      - name: Validate synthetic benchmark cases
+        run: python3 bench/compare_jev_hikmah.py --dry-run
+      - name: Run offline Jev adapter contract tests
+        run: cargo test -p hikmah-kernel --test jev
+      - name: Build Hikmah CLI
+        run: cargo build --release -p hikmah-kernel
+      - name: Measure offline Hikmah decisions
+        run: python3 bench/compare_jev_hikmah.py --binary target/release/hikmah --offline --output offline-results.json
+      - name: Show offline case results
+        run: cat offline-results.json
+      - name: Compare three variants on identical cases
+        if: ${{ env.TYPESAFE_API_KEY != '' }}
+        run: python3 bench/compare_jev_hikmah.py --binary target/release/hikmah
+      - name: Show per-case results
+        if: ${{ env.TYPESAFE_API_KEY != '' }}
+        run: cat benchmark-results.json
+      - name: Explain unavailable live test
+        if: ${{ env.TYPESAFE_API_KEY == '' }}
+        run: echo 'Live comparison skipped; add TYPESAFE_API_KEY as a repository Actions secret, then rerun this job.'
