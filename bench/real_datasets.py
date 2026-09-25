@@ -33,7 +33,7 @@ SOURCES = {
     "bank_test.csv": f"https://raw.githubusercontent.com/PolyAI-LDN/task-specific-datasets/{POLY}/banking_data/test.csv",
     "clinc.json": f"https://raw.githubusercontent.com/clinc/oos-eval/{CLINC}/data/data_full.json",
     "sms.zip": "https://archive.ics.uci.edu/static/public/228/sms+spam+collection.zip",
-    "boolq.jsonl": "https://storage.googleapis.com/boolq/dev.jsonl",
+    "boolq.zip": "https://dl.fbaipublicfiles.com/glue/superglue/data/v2/BoolQ.zip",
 }
 ATTRIBUTION = {
     "banking77": {"source": "https://github.com/PolyAI-LDN/task-specific-datasets", "revision": POLY,
@@ -43,7 +43,7 @@ ATTRIBUTION = {
     "sms_spam": {"source": "https://archive.ics.uci.edu/dataset/228/sms+spam+collection",
                  "license": "CC-BY-4.0", "authors": "Almeida and Hidalgo (2011), DOI 10.24432/C5CC84", "split": "full unsplit corpus; zero-shot, no fitting"},
     "boolq": {"source": "https://github.com/google-research-datasets/boolean-questions",
-              "license": "CC-BY-SA-3.0", "authors": "Clark et al., BoolQ (2019)", "split": "labeled development; no tuning on this split"},
+              "license": "CC-BY-SA-3.0", "authors": "Clark et al., BoolQ (2019)", "split": "SuperGLUE v2 labeled validation; no tuning on this split"},
 }
 INSTRUCTIONS = {
     "banking77": "Classify the customer's banking intent into exactly one supplied category.",
@@ -115,12 +115,15 @@ def prepare(directory):
             label, text = line.split("\t", 1)
             add("sms_spam", "corpus", i, text, label)
     labels["boolq"] = ["false", "true"]
-    for i, line in enumerate((raw / "boolq.jsonl").read_text(encoding="utf-8").splitlines()):
+    with zipfile.ZipFile(raw / "boolq.zip") as archive:
+        name = next(n for n in archive.namelist() if n.endswith("/val.jsonl"))
+        boolq_lines = archive.read(name).decode("utf-8").splitlines()
+    for i, line in enumerate(boolq_lines):
         row = json.loads(line)
-        if not isinstance(row["answer"], bool):
+        if not isinstance(row["label"], bool):
             raise ValueError("BoolQ gold must be boolean")
         state = canonical({"question": row["question"], "passage": row["passage"], "title": row.get("title", "")})
-        add("boolq", "dev", i, state, str(row["answer"]).lower())
+        add("boolq", "validation", i, state, str(row["label"]).lower())
     if len({r["id"] for r in rows}) != len(rows):
         raise ValueError("Duplicate source IDs")
     for row in rows:

@@ -18,7 +18,7 @@ Sources and citations:
 - [BANKING77](https://github.com/PolyAI-LDN/task-specific-datasets): Casanueva et al., *Efficient Intent Detection with Dual Sentence Encoders* (2020). Source commit `57ec275d8078af65b7731c2a98be812d844a6d6b`.
 - [CLINC150](https://github.com/clinc/oos-eval): Larson et al., *An Evaluation Dataset for Intent Classification and Out-of-Scope Prediction* (2019). Source commit `828f8093932c8fe6ca7936c3d2e52903b1c523de`.
 - [SMS Spam](https://archive.ics.uci.edu/dataset/228/sms+spam+collection): Almeida and Hidalgo (2011), DOI `10.24432/C5CC84`.
-- [BoolQ](https://github.com/google-research-datasets/boolean-questions): Clark et al., *BoolQ: Exploring the Surprising Difficulty of Natural Yes/No Questions* (2019).
+- [BoolQ](https://github.com/google-research-datasets/boolean-questions): Clark et al., *BoolQ: Exploring the Surprising Difficulty of Natural Yes/No Questions* (2019), downloaded through the [SuperGLUE v2 distribution](https://dl.fbaipublicfiles.com/glue/superglue/data/v2/BoolQ.zip). The original Google bucket returned HTTP 403 during validation.
 
 Downloads and derived evaluation records retain source attribution in
 `manifest.json`. Upstream data is not committed to this repository. BANKING and
