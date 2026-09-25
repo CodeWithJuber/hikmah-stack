@@ -1,0 +1,37 @@
+name: real dataset offline checks
+
+on:
+  push:
+    branches: [benchmark/jev-hikmah]
+    paths:
+      - 'bench/real_datasets.py'
+      - 'bench/test_real_datasets.py'
+      - 'runtime/hikmah-kernel/examples/real_bench_port.rs'
+      - '.github/workflows/real-dataset-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --check
+      - name: Build actual kernel bridge
+        run: cargo build --locked --release -p hikmah-kernel --example real_bench_port
+      - name: Benchmark regression tests
+        run: python3 -m unittest discover -s bench -p test_real_datasets.py
+      - name: Download and validate all public splits
+        run: python3 bench/real_datasets.py prepare
+      - name: Run all examples through the real no-engine kernel
+        run: python3 bench/real_datasets.py run --out .benchmark-results/real-offline-v1
+      - name: Show measured offline report
+        run: cat .benchmark-results/real-offline-v1/report.md
