@@ -25,6 +25,10 @@ jobs:
         run: cargo test -p hikmah-kernel --test jev
       - name: Build Hikmah CLI
         run: cargo build --release -p hikmah-kernel
+      - name: Measure offline Hikmah decisions
+        run: python3 bench/compare_jev_hikmah.py --binary target/release/hikmah --offline --output offline-results.json
+      - name: Show offline case results
+        run: cat offline-results.json
       - name: Compare three variants on identical cases
         if: ${{ env.TYPESAFE_API_KEY != '' }}
         run: python3 bench/compare_jev_hikmah.py --binary target/release/hikmah
