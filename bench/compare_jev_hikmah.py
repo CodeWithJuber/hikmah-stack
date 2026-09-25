@@ -111,9 +111,9 @@ def run_jev(case, key, timeout):
     return answer.get("choice"), round(elapsed, 1), data.get("model"), data.get("usage", {})
 
 
-def summarize(rows):
+def summarize(rows, variants):
     result = {}
-    for variant in ("jev", "hikmah", "jev+hikmah"):
+    for variant in variants:
         valid = [row[variant] for row in rows if row[variant].get("status") == "ok"]
         known = [x for x in valid if x["kind"] == "known"]
         result[variant] = {
@@ -131,6 +131,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", default="target/release/hikmah")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--offline", action="store_true", help="Measure the Hikmah kernel without an API key")
     parser.add_argument("--output", default="benchmark-results.json")
     args = parser.parse_args()
     ids = [case["id"] for case in CASES]
@@ -142,15 +143,16 @@ def main():
         print(json.dumps({"cases": ids, "known": sum(x["kind"] == "known" for x in CASES)}))
         return
     key = os.environ.get("TYPESAFE_API_KEY", "")
-    if not key.strip():
+    if not args.offline and not key.strip():
         raise SystemExit("TYPESAFE_API_KEY missing; add a repository Actions secret (do not print it)")
+    variants = ("hikmah",) if args.offline else ("hikmah", "jev", "jev+hikmah")
     rows = []
     with tempfile.TemporaryDirectory() as directory:
         for case in CASES:
             path = Path(directory) / (case["id"] + ".json")
             path.write_text(json.dumps(frame(case)), encoding="utf-8")
             row = {"id": case["id"], "kind": case["kind"], "expected": case.get("expected")}
-            for variant in ("hikmah", "jev", "jev+hikmah"):
+            for variant in variants:
                 try:
                     if variant == "jev":
                         choice, ms, model, usage = run_jev(case, key, 15)
@@ -171,12 +173,12 @@ def main():
                     # Keep errors generic: an upstream exception might include a request URL.
                     row[variant] = {"status": "error", "error_type": type(exc).__name__}
             rows.append(row)
-    output = {"benchmark": "synthetic decision workflow v1", "cases": rows, "summary": summarize(rows),
+    output = {"benchmark": "synthetic decision workflow v1", "cases": rows, "summary": summarize(rows, variants),
               "limits": "4 known cases, 2 exploratory; no claim of broad accuracy or calibrated probabilities"}
     Path(args.output).write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(output["summary"], indent=2))
     print("Results saved to", args.output)
-    if any(row[v]["status"] != "ok" for row in rows for v in ("jev", "hikmah", "jev+hikmah")):
+    if any(row[v]["status"] != "ok" for row in rows for v in variants):
         raise SystemExit("Some variants failed; see error_type in results")
 
 
