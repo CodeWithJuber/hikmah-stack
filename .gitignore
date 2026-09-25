@@ -10,3 +10,5 @@ __pycache__/
 
 target/
 .hikmah/
+.benchmark-data/
+.benchmark-results/
