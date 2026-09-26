@@ -49,3 +49,14 @@ These run without new infrastructure:
 - **Ledger:** tamper, truncation (head file), forged chain-valid appends past the head (refused until a person runs `verify-ledger --accept-tail`, which the CLI refuses inside an agent session), torn tail, legacy format, concurrent writers, and verification during concurrent writes (no false alarm) are covered by tests; replay time can be measured with `hikmah verify-ledger` on a large store. The chain is unkeyed, so an append by someone who can also rewrite or delete the head file is not detectable without a pinned head.
 
 Still not measurable without new data: recall precision@k on a labeled corpus, and provenance retention across consolidation.
+
+## Reproducible offline capability measurements
+
+[`bench/run_kernel.sh`](../bench/run_kernel.sh) builds without the Jev network feature and
+runs the offline regression suite, a separate release timing gate, synthetic 1k/10k/100k
+memory workloads, seeded decision invariants and isolated recovery checks. The optional
+Truth Gate corpus evaluator accepts externally labeled completion messages. Every report
+records source hashes and distinguishes synthetic regression fixtures from real labeled
+data. See [the protocol and limitations](../bench/KERNEL_BENCHMARK.md). This provides measured
+synthetic runtime/invariant results; it does not supply the missing real-data memory labels
+or a host-model behavioural evaluation.

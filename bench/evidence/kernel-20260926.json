@@ -1,0 +1,631 @@
+{
+  "protocol": "pure-kernel-v1",
+  "status": "completed",
+  "started_utc": "20260926T130622.546022Z",
+  "commit": "1b85f18d3281834beaae7692c755b00d30d6d96e",
+  "dirty_checkout": false,
+  "source_sha256": {
+    "runtime/hikmah-kernel/examples/bench_kernel.rs": "3490a15b6ac15a5e040d5d96eb5463ab6a076c59b043b4fa6a4ee57db755e4fd",
+    "runtime/hikmah-kernel/examples/real_bench_port.rs": "3482965f2533725dae941824975a560bad3043f901eebcece903835d60a811b7",
+    "runtime/hikmah-kernel/src/calibration.rs": "73e5daacfff5e6e538fe4cb18153bab5dafb0847b97d79b807fb0dd4401884cb",
+    "runtime/hikmah-kernel/src/claims.rs": "749a5a8b25bd6a510fb5cdc94a1beeb474762bbd06b9dbe6560175d7ffafb2d7",
+    "runtime/hikmah-kernel/src/consolidation.rs": "db9188194cb04209554dfad38e318d4e923c1334f24af9afcba249d928564c84",
+    "runtime/hikmah-kernel/src/council.rs": "07f72f18029b4b6bc3f413b0c08e93b42e725b9b086da7c655941d84a1e4e780",
+    "runtime/hikmah-kernel/src/decision.rs": "c193949193cf37243f134c4a83042af68e1982c205e25858abfdc4f21fc75c48",
+    "runtime/hikmah-kernel/src/decision_port.rs": "0a665d2eef3a162c737fa8ebb3ddbea48f130b1ba6255edff5a36aac8f0b3042",
+    "runtime/hikmah-kernel/src/error.rs": "1329822c469fc97bfc9d328cdf1ee863869dc548931256c98883d8d669feb9e7",
+    "runtime/hikmah-kernel/src/focus.rs": "f835d50da1276fab21512d56d2eaa5e46d6c0bcb9a0ffc8a09019c551d3eb0bf",
+    "runtime/hikmah-kernel/src/hook.rs": "e4acb4e58fcbd7a5757ff88418d71c6e64658cb49b09d2f0c8e6314d4fe0a4c8",
+    "runtime/hikmah-kernel/src/jev.rs": "c8c46b386b4eb1262e1ec415da5f14f0251c9b4c427dfef8ec5543a4532d64d6",
+    "runtime/hikmah-kernel/src/ledger.rs": "35a0d1125d9125a792b7e800d7826d84dd1b22a786e97410d4195f8dc57f6fc3",
+    "runtime/hikmah-kernel/src/lib.rs": "416ad7dc37703246a1a04cd957f3ded6c862ac15b3c6b6d0815589b14395b11c",
+    "runtime/hikmah-kernel/src/main.rs": "9d02d1dfb4f60abbd8564ab34e1c405137bc071e398e1f81d87f4bf1f1a11dad",
+    "runtime/hikmah-kernel/src/model_port.rs": "22c78bef722e7742c75265f150ec242b4e394a89f4f594403a1edc9133a0917c",
+    "runtime/hikmah-kernel/src/planner.rs": "faaf8019ec185e64efce21026c1fe221bcaff46fdfaf5b6d508566f4028c76a9",
+    "runtime/hikmah-kernel/src/policy.rs": "1a5c29bd51dd5f4b58794277d442cb3d2ddabbe57637b1685e5e757a03876dc3",
+    "runtime/hikmah-kernel/src/principal.rs": "dac8fb73dc273bb08a73eeabb7c9a50e614022ed2c3b5e4476eb389d703b192c",
+    "runtime/hikmah-kernel/src/prospective.rs": "cb0815c983c72f34ee82a69fc222c3eb4e0e466ee778dabee010b32a159b9755",
+    "runtime/hikmah-kernel/src/recall.rs": "623d531b0ec8826f3c4e3f9b77eab87f646b771c385ceb031081e732bc7e626b",
+    "runtime/hikmah-kernel/src/secrets.rs": "c72ac9da3f4cde68da5946d4a06878b58b5710f3aafe59f9db6646af4264a522",
+    "runtime/hikmah-kernel/src/threshold.rs": "219ac338086460e8db0b44cefa4312b0252138f9803a6884f84c0fb5aa0f61b1",
+    "runtime/hikmah-kernel/src/trace.rs": "b43857a4762eb9db9bb8ef52642f37d71e0f4acf88a35813655d77e30151d1ec",
+    "runtime/hikmah-kernel/src/validate.rs": "3b5e0277095d60edb12cafa377ee345fce9e1f2dc1f20fb88fb8fd897d7e8b02",
+    "runtime/hikmah-kernel/tests/calibration.rs": "dba8ff03311de530ee93c0265d730eee5b1dda3db881822952a4ca8936e913fb",
+    "runtime/hikmah-kernel/tests/common/mod.rs": "4fe7b5a1fd73f4d5bfe6a124ce3537510f1a2fef9d06041d90bf0f6c250e15e8",
+    "runtime/hikmah-kernel/tests/conflicts.rs": "d986f6b513a988d039a6aa998d9b4deaf93583aaaef841fa3f77a68dd7406880",
+    "runtime/hikmah-kernel/tests/consolidation.rs": "6638843760d54a748e2ab467510b229fae85ced7b8d60805d5045efa682fcd0b",
+    "runtime/hikmah-kernel/tests/deadlines.rs": "a21402c78f3d10ccbe6bb98d11989528bdb310c3454593209e923e38e06abe89",
+    "runtime/hikmah-kernel/tests/decision_port.rs": "a49030729c230de7dbd162d4c34969c12ad554cb35765c4e3ee3407b661bf8ef",
+    "runtime/hikmah-kernel/tests/decisions.rs": "8ba893c34499925ce71f906828838abdf876338885393f06a1554c904545d3cd",
+    "runtime/hikmah-kernel/tests/estimates.rs": "a090ee81b07d37f5830e55928033c4f2da65e570c1b456c4512c16c7567b0922",
+    "runtime/hikmah-kernel/tests/focus.rs": "ebc588c1317ccb0391b3fe691f7e10c6c5df55e92f8734e48881aef8d0bd81e2",
+    "runtime/hikmah-kernel/tests/gate_threshold.rs": "365717183b1c005ed1e0d9af5f1a8ad5361bf6c5dc6a8bc86a7ebf421a0b4911",
+    "runtime/hikmah-kernel/tests/hook.rs": "341d78374c87f512ec5df5eda1ae6f0a70ad6f1c38da25d6189732962d73bc86",
+    "runtime/hikmah-kernel/tests/jev.rs": "5c880de656e90bb80b6c19934d28f2899a80897f4dd8698b5bf6aa3e39f216c4",
+    "runtime/hikmah-kernel/tests/ledger.rs": "afe99a81626dbb0a22be4353cee686fe4a3da5a095cf9e1a72cdcc9f178792c2",
+    "runtime/hikmah-kernel/tests/planner.rs": "6a5e2589ae9f96e8ba42d7c223b019766af0d88ef0114fe04f3fffff24eed292",
+    "runtime/hikmah-kernel/tests/policy.rs": "ce64a3f28c133811ff4a89ab3f9733b6eba9dd7c4681de60d74068280f8ffdc4",
+    "runtime/hikmah-kernel/tests/principal.rs": "d01b34be1b772e9a9e632111b756b9233b0145361aa5a5445b78d22ecde18c9c",
+    "runtime/hikmah-kernel/tests/recall.rs": "2a032bb23c429c18f423448c46486ca84c8778de49ee73f031a4dac1ce12a8dc",
+    "runtime/hikmah-kernel/tests/traceweave.rs": "8746eb742213a2f9fefcea4a6dc5318ec3dcf56b7a349b8263e8aa51a0e8d651",
+    "Cargo.lock": "1c6027d6002d2937061443fbebb856e5c53f60d7880fa5265691cfa0fe607885",
+    "runtime/hikmah-kernel/Cargo.toml": "f29f20bebe3d52e9b6deed7e866ef1e24deedd7e2a0ee21e73c6e5230a6cf4cc",
+    "bench/kernel_bench.py": "2e65e1e925abf8a81b65d83d10f6a637ecdd70680de466416ee81e277c0e8597"
+  },
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+  "cpu_count": 9,
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8",
+  "settings": {
+    "sizes": [
+      1000,
+      10000,
+      100000
+    ],
+    "queries": 30,
+    "decision_cases": 10000,
+    "seed": 20260926,
+    "timeout": 1800,
+    "gate_corpus": "bench/fixtures/gate-corpus-example.json",
+    "out": ".benchmark-results/kernel-final"
+  },
+  "stages": {
+    "build": {
+      "status": "completed",
+      "elapsed_s": 6.043426100000033,
+      "result": null,
+      "error": null
+    },
+    "regression": {
+      "status": "completed",
+      "elapsed_s": 8.87356105300023,
+      "result": null,
+      "error": null
+    },
+    "package": {
+      "status": "completed",
+      "elapsed_s": 0.059209943000041676,
+      "result": null,
+      "error": null
+    },
+    "python-truth-gate": {
+      "status": "completed",
+      "elapsed_s": 0.5064164890000029,
+      "result": null,
+      "error": null
+    },
+    "release-hook-timing": {
+      "status": "completed",
+      "elapsed_s": 3.3491793200000757,
+      "result": null,
+      "error": null
+    },
+    "decision-invariants": {
+      "status": "completed",
+      "elapsed_s": 0.05366363999974055,
+      "result": {
+        "cases": 10000,
+        "counterexamples": [],
+        "elapsed_ms": 51.819125,
+        "families": {
+          "all_blocked": 1667,
+          "complete_score_oracle": 1667,
+          "high_score_hard_block": 1667,
+          "invalid_numeric_input": 1666,
+          "reversibility_band": 1666,
+          "unknowns_and_model_estimates": 1667
+        },
+        "kind": "synthetic_decision_invariants",
+        "limits": [
+          "Generated families are not real decision-quality labels or a proof over all inputs.",
+          "Metamorphic checks keep criteria fixed; weight perturbations require separate expectations."
+        ],
+        "ok": true,
+        "rng": "splitmix64",
+        "seed": 20260926,
+        "violation_rate": 0.0,
+        "violations": 0
+      },
+      "error": null
+    },
+    "recovery": {
+      "status": "completed",
+      "elapsed_s": 0.011029932999917946,
+      "result": {
+        "acknowledged_records": 50,
+        "acknowledged_survived": true,
+        "edit_detected": true,
+        "kind": "synthetic_recovery",
+        "limits": [
+          "Process killed after an acknowledged commit, not during fsync or head replacement.",
+          "Torn tail, edit and truncation are injected into separate copies.",
+          "This does not simulate power loss or an attacker rewriting both ledger and head."
+        ],
+        "ok": true,
+        "restart_ms": 0.300552,
+        "torn_tail_repaired": true,
+        "truncation_detected": true
+      },
+      "error": null
+    },
+    "scale-1000": {
+      "status": "completed",
+      "elapsed_s": 0.05631342600008793,
+      "result": {
+        "batch_append_ms": {
+          "n": 1,
+          "p50": 9.590487999999999,
+          "p95": 9.590487999999999,
+          "p99": 9.590487999999999
+        },
+        "batch_size": 1000,
+        "batched_records": 950,
+        "exact_cue_hits": 30,
+        "head_unchanged": true,
+        "kind": "synthetic_scale",
+        "ledger_bytes": 595726,
+        "limits": [
+          "Batched seeding does not measure per-record durable append latency.",
+          "Warm filesystem cache; reopening in the same process is not a cold-start measurement.",
+          "No structured claims in this workload; conflict-heavy stores need a separate workload.",
+          "Synthetic exact-cue quality is not semantic or real-world retrieval accuracy.",
+          "RSS is process-wide Linux /proc data; unavailable platforms report null."
+        ],
+        "memory_after_replay": {
+          "process_peak_rss_kib": 8552,
+          "rss_kib": 8156
+        },
+        "memory_after_seed": {
+          "process_peak_rss_kib": 8552,
+          "rss_kib": 8152
+        },
+        "ok": true,
+        "policy": {
+          "allow_sensitive_persistence": false,
+          "calibration_min_outcomes": 50,
+          "consolidation_min_confidence": 0.6000000238418579,
+          "consolidation_min_independent_sources": 2,
+          "consolidation_min_support": 2,
+          "minimum_recall_score": 0.11999999731779099,
+          "recall": {
+            "cue_lexical": 0.800000011920929,
+            "cue_tag": 0.20000000298023224,
+            "lexical_coverage": 0.699999988079071,
+            "lexical_jaccard": 0.30000001192092896,
+            "listing_scale": 0.5,
+            "match_floor": 0.15000000596046448,
+            "meta_confidence": 0.20000000298023224,
+            "meta_prospective": 0.10000000149011612,
+            "meta_provenance": 0.25,
+            "meta_recency": 0.25,
+            "meta_salience": 0.20000000298023224,
+            "metadata_share": 0.44999998807907104,
+            "overdue_floor": 0.15000000596046448,
+            "prospective_scale_days": 7.0,
+            "recency_scale_days": 30.0,
+            "redundancy_penalty": 0.3499999940395355,
+            "redundant_at": 0.800000011920929,
+            "relevance_base": 0.550000011920929,
+            "undated_commitment_urgency": 0.3499999940395355,
+            "unverified_provenance_factor": 0.6499999761581421
+          },
+          "recall_limit": 8,
+          "working_set_limit": 12
+        },
+        "provenance_retained": 1000,
+        "queries": 30,
+        "recall_at_1": 1.0,
+        "recall_ms": {
+          "n": 30,
+          "p50": 0.49230550000000006,
+          "p95": 0.6379250999999999,
+          "p99": 0.7522262000000001
+        },
+        "recall_replay_matches": 30,
+        "records": 1000,
+        "replay_ms": 3.668359,
+        "replayed_records": 1000,
+        "returned": 30,
+        "seed_ms": 16.116115,
+        "single_append_ms": {
+          "n": 50,
+          "p50": 0.10766200000000001,
+          "p95": 0.17717729999999995,
+          "p99": 0.23926364999999983
+        },
+        "verify_ms": 0.760003,
+        "workload": "unclaimed observation traces, unique exact lexical cues, fixed clock"
+      },
+      "error": null
+    },
+    "scale-10000": {
+      "status": "completed",
+      "elapsed_s": 0.39528941299977305,
+      "result": {
+        "batch_append_ms": {
+          "n": 10,
+          "p50": 4.6483775000000005,
+          "p95": 6.744703449999997,
+          "p99": 7.826164690000001
+        },
+        "batch_size": 1000,
+        "batched_records": 9950,
+        "exact_cue_hits": 30,
+        "head_unchanged": true,
+        "kind": "synthetic_scale",
+        "ledger_bytes": 5977727,
+        "limits": [
+          "Batched seeding does not measure per-record durable append latency.",
+          "Warm filesystem cache; reopening in the same process is not a cold-start measurement.",
+          "No structured claims in this workload; conflict-heavy stores need a separate workload.",
+          "Synthetic exact-cue quality is not semantic or real-world retrieval accuracy.",
+          "RSS is process-wide Linux /proc data; unavailable platforms report null."
+        ],
+        "memory_after_replay": {
+          "process_peak_rss_kib": 29900,
+          "rss_kib": 24212
+        },
+        "memory_after_seed": {
+          "process_peak_rss_kib": 25072,
+          "rss_kib": 25072
+        },
+        "ok": true,
+        "policy": {
+          "allow_sensitive_persistence": false,
+          "calibration_min_outcomes": 50,
+          "consolidation_min_confidence": 0.6000000238418579,
+          "consolidation_min_independent_sources": 2,
+          "consolidation_min_support": 2,
+          "minimum_recall_score": 0.11999999731779099,
+          "recall": {
+            "cue_lexical": 0.800000011920929,
+            "cue_tag": 0.20000000298023224,
+            "lexical_coverage": 0.699999988079071,
+            "lexical_jaccard": 0.30000001192092896,
+            "listing_scale": 0.5,
+            "match_floor": 0.15000000596046448,
+            "meta_confidence": 0.20000000298023224,
+            "meta_prospective": 0.10000000149011612,
+            "meta_provenance": 0.25,
+            "meta_recency": 0.25,
+            "meta_salience": 0.20000000298023224,
+            "metadata_share": 0.44999998807907104,
+            "overdue_floor": 0.15000000596046448,
+            "prospective_scale_days": 7.0,
+            "recency_scale_days": 30.0,
+            "redundancy_penalty": 0.3499999940395355,
+            "redundant_at": 0.800000011920929,
+            "relevance_base": 0.550000011920929,
+            "undated_commitment_urgency": 0.3499999940395355,
+            "unverified_provenance_factor": 0.6499999761581421
+          },
+          "recall_limit": 8,
+          "working_set_limit": 12
+        },
+        "provenance_retained": 10000,
+        "queries": 30,
+        "recall_at_1": 1.0,
+        "recall_ms": {
+          "n": 30,
+          "p50": 4.299968,
+          "p95": 4.65994725,
+          "p99": 4.84230833
+        },
+        "recall_replay_matches": 30,
+        "records": 10000,
+        "replay_ms": 39.988147000000005,
+        "replayed_records": 10000,
+        "returned": 30,
+        "seed_ms": 58.001355999999994,
+        "single_append_ms": {
+          "n": 50,
+          "p50": 0.09043100000000001,
+          "p95": 0.17598584999999983,
+          "p99": 0.3476355099999998
+        },
+        "verify_ms": 7.595847999999999,
+        "workload": "unclaimed observation traces, unique exact lexical cues, fixed clock"
+      },
+      "error": null
+    },
+    "scale-100000": {
+      "status": "completed",
+      "elapsed_s": 5.071866024999963,
+      "result": {
+        "batch_append_ms": {
+          "n": 100,
+          "p50": 4.7660800000000005,
+          "p95": 5.302986749999999,
+          "p99": 6.146571810000012
+        },
+        "batch_size": 1000,
+        "batched_records": 99950,
+        "exact_cue_hits": 30,
+        "head_unchanged": true,
+        "kind": "synthetic_scale",
+        "ledger_bytes": 59977728,
+        "limits": [
+          "Batched seeding does not measure per-record durable append latency.",
+          "Warm filesystem cache; reopening in the same process is not a cold-start measurement.",
+          "No structured claims in this workload; conflict-heavy stores need a separate workload.",
+          "Synthetic exact-cue quality is not semantic or real-world retrieval accuracy.",
+          "RSS is process-wide Linux /proc data; unavailable platforms report null."
+        ],
+        "memory_after_replay": {
+          "process_peak_rss_kib": 239132,
+          "rss_kib": 180756
+        },
+        "memory_after_seed": {
+          "process_peak_rss_kib": 189304,
+          "rss_kib": 189304
+        },
+        "ok": true,
+        "policy": {
+          "allow_sensitive_persistence": false,
+          "calibration_min_outcomes": 50,
+          "consolidation_min_confidence": 0.6000000238418579,
+          "consolidation_min_independent_sources": 2,
+          "consolidation_min_support": 2,
+          "minimum_recall_score": 0.11999999731779099,
+          "recall": {
+            "cue_lexical": 0.800000011920929,
+            "cue_tag": 0.20000000298023224,
+            "lexical_coverage": 0.699999988079071,
+            "lexical_jaccard": 0.30000001192092896,
+            "listing_scale": 0.5,
+            "match_floor": 0.15000000596046448,
+            "meta_confidence": 0.20000000298023224,
+            "meta_prospective": 0.10000000149011612,
+            "meta_provenance": 0.25,
+            "meta_recency": 0.25,
+            "meta_salience": 0.20000000298023224,
+            "metadata_share": 0.44999998807907104,
+            "overdue_floor": 0.15000000596046448,
+            "prospective_scale_days": 7.0,
+            "recency_scale_days": 30.0,
+            "redundancy_penalty": 0.3499999940395355,
+            "redundant_at": 0.800000011920929,
+            "relevance_base": 0.550000011920929,
+            "undated_commitment_urgency": 0.3499999940395355,
+            "unverified_provenance_factor": 0.6499999761581421
+          },
+          "recall_limit": 8,
+          "working_set_limit": 12
+        },
+        "provenance_retained": 100000,
+        "queries": 30,
+        "recall_at_1": 1.0,
+        "recall_ms": {
+          "n": 30,
+          "p50": 56.980965499999996,
+          "p95": 62.36614069999998,
+          "p99": 67.19556499000001
+        },
+        "recall_replay_matches": 30,
+        "records": 100000,
+        "replay_ms": 392.55655499999995,
+        "replayed_records": 100000,
+        "returned": 30,
+        "seed_ms": 516.305966,
+        "single_append_ms": {
+          "n": 50,
+          "p50": 0.1155445,
+          "p95": 0.16335309999999997,
+          "p99": 0.17054365999999996
+        },
+        "verify_ms": 77.604404,
+        "workload": "unclaimed observation traces, unique exact lexical cues, fixed clock"
+      },
+      "error": null
+    },
+    "truth-gate-corpus": {
+      "status": "completed",
+      "elapsed_s": 0.003425422999953298,
+      "result": {
+        "kind": "synthetic_regression",
+        "source": "Author-written evaluator smoke fixture, not real agent traffic",
+        "corpus_sha256": "6446660292ce5aecc69b62b3541d0c65ed0fd64d1615dca22476c2e8c7639925",
+        "metrics": {
+          "n": 6,
+          "tp": 2,
+          "tn": 2,
+          "fp": 1,
+          "fn": 1,
+          "precision": 0.6666666666666666,
+          "recall": 0.6666666666666666,
+          "f1": 0.6666666666666666,
+          "false_block_rate": 0.3333333333333333,
+          "false_pass_rate": 0.3333333333333333,
+          "recall_wilson95": [
+            0.2076596008020477,
+            0.9385080552796037
+          ],
+          "false_block_wilson95": [
+            0.06149194472039621,
+            0.7923403991979522
+          ]
+        },
+        "task_count": 6,
+        "by_task": {
+          "one": {
+            "n": 1,
+            "tp": 1,
+            "tn": 0,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "false_block_rate": null,
+            "false_pass_rate": 0.0,
+            "recall_wilson95": [
+              0.20654931437723745,
+              1
+            ],
+            "false_block_wilson95": null
+          },
+          "two": {
+            "n": 1,
+            "tp": 1,
+            "tn": 0,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "false_block_rate": null,
+            "false_pass_rate": 0.0,
+            "recall_wilson95": [
+              0.20654931437723745,
+              1
+            ],
+            "false_block_wilson95": null
+          },
+          "three": {
+            "n": 1,
+            "tp": 0,
+            "tn": 0,
+            "fp": 0,
+            "fn": 1,
+            "precision": null,
+            "recall": 0.0,
+            "f1": 0.0,
+            "false_block_rate": null,
+            "false_pass_rate": 1.0,
+            "recall_wilson95": [
+              0,
+              0.7934506856227626
+            ],
+            "false_block_wilson95": null
+          },
+          "four": {
+            "n": 1,
+            "tp": 0,
+            "tn": 1,
+            "fp": 0,
+            "fn": 0,
+            "precision": null,
+            "recall": null,
+            "f1": null,
+            "false_block_rate": 0.0,
+            "false_pass_rate": null,
+            "recall_wilson95": null,
+            "false_block_wilson95": [
+              0,
+              0.7934506856227626
+            ]
+          },
+          "five": {
+            "n": 1,
+            "tp": 0,
+            "tn": 1,
+            "fp": 0,
+            "fn": 0,
+            "precision": null,
+            "recall": null,
+            "f1": null,
+            "false_block_rate": 0.0,
+            "false_pass_rate": null,
+            "recall_wilson95": null,
+            "false_block_wilson95": [
+              0,
+              0.7934506856227626
+            ]
+          },
+          "six": {
+            "n": 1,
+            "tp": 0,
+            "tn": 0,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.0,
+            "recall": null,
+            "f1": 0.0,
+            "false_block_rate": 1.0,
+            "false_pass_rate": null,
+            "recall_wilson95": null,
+            "false_block_wilson95": [
+              0.20654931437723745,
+              1
+            ]
+          }
+        },
+        "duplicate_message_rows": 1,
+        "predictions": [
+          {
+            "id": "caught-todo",
+            "false_completion": true,
+            "blocked": true,
+            "ms": 0.005939
+          },
+          {
+            "id": "caught-promise",
+            "false_completion": true,
+            "blocked": true,
+            "ms": 0.035053
+          },
+          {
+            "id": "missed-hidden-failure",
+            "false_completion": true,
+            "blocked": false,
+            "ms": 0.001863
+          },
+          {
+            "id": "true-completion",
+            "false_completion": false,
+            "blocked": false,
+            "ms": 0.001091
+          },
+          {
+            "id": "named-widget",
+            "false_completion": false,
+            "blocked": false,
+            "ms": 0.010777
+          },
+          {
+            "id": "false-block",
+            "false_completion": false,
+            "blocked": true,
+            "ms": 0.003065
+          }
+        ],
+        "limits": [
+          "Rules-only message screen; not an execution verifier or an engine evaluation.",
+          "Labels and source annotations are supplied by the corpus author, not authenticated.",
+          "Message-level Wilson intervals assume independence; task clusters and duplicates may violate it.",
+          "No threshold tuning or corpus fitting performed by this evaluator."
+        ]
+      },
+      "error": null
+    }
+  },
+  "binary_sha256": "2a3087bf308e9ff5a308591f0bc1b7a188cfb5b9d89b8ce18dcbdd296ada6633",
+  "finished_utc": "2026-09-26T13:06:47.019332+00:00",
+  "additional_verification": {
+    "offline_regressions": {
+      "passed": 153,
+      "failed": 0,
+      "ignored": 1
+    },
+    "default_feature_regressions": {
+      "passed": 160,
+      "failed": 0,
+      "ignored": 2
+    },
+    "explicit_release_timing": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    "benchmark_evaluator_tests": {
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    "cargo_fmt_check": "passed",
+    "clippy_default_and_no_default_features": "passed with -D warnings",
+    "note": "Default-feature tests/lint were run in this workspace before the measured commit; Rust source is the same apart from equivalent even-number syntax and formatting. Local results, not a CI claim."
+  },
+  "published_equivalent_commit": "4b7d55ae7022ffb88225adff96775c7b81f16c36",
+  "measured_source_tree_sha": "97af816e35a712f7dca161c550c7275d846f2f97",
+  "publication_note": "Local measured commit and published equivalent commit have identical Git tree SHA; only commit metadata differs."
+}
