@@ -1,0 +1,706 @@
+{
+  "status": "completed",
+  "started_utc": "2026-09-26T13:54:18.496361+00:00",
+  "kind": "public_labeled_document_retrieval",
+  "platform": {
+    "system": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "cpu_count": 9,
+    "python": "3.12.14",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)"
+  },
+  "source": {
+    "commit": "172fb21d756605bc96488e73d7a1a58f497b6762",
+    "tree": "d940c27d0654a208797bdef4104f949b09e476a2",
+    "working_tree_status": "",
+    "files_sha256": {
+      "bench/retrieval_bench.py": "83d272d2804898e9c1ec6d66058c3c7d451b4cd25a71f58552e463f8166f2e81",
+      "runtime/hikmah-kernel/examples/retrieval_bench.rs": "f5172a0282cc4d55cbdfdd81bd642c23b0ab32fb6f48afa2cec31ae5fdbd47fa",
+      "Cargo.lock": "1c6027d6002d2937061443fbebb856e5c53f60d7880fa5265691cfa0fe607885"
+    },
+    "binary_sha256": "991af2089715e8601971054f1fdaafad7f1a91f29c8f69ce0f10907b610ec6d1",
+    "published_equivalent_commit": "d21f5f0b420da0691f96f82abf5cd13055df60cc",
+    "published_equivalent_tree": "d940c27d0654a208797bdef4104f949b09e476a2",
+    "equivalence_note": "Local measured and GitHub-published commits differ in metadata, with the identical complete Git tree."
+  },
+  "arguments": {
+    "datasets": [
+      "scifact",
+      "nfcorpus",
+      "fiqa"
+    ],
+    "max_queries": 0,
+    "query_limits": {
+      "fiqa": 100
+    },
+    "timeout": 7200
+  },
+  "datasets": {
+    "scifact": {
+      "queries": 300,
+      "ingestion": {
+        "admitted": 5183,
+        "bm25": {
+          "b": 0.75,
+          "k1": 1.2
+        },
+        "bm25_index_ms": 269.60273599999994,
+        "corpus_total": 5183,
+        "ingest_both_ms": 2669.7729839999997,
+        "kind": "loaded",
+        "policy": {
+          "allow_sensitive_persistence": false,
+          "calibration_min_outcomes": 50,
+          "consolidation_min_confidence": 0.6000000238418579,
+          "consolidation_min_independent_sources": 2,
+          "consolidation_min_support": 2,
+          "minimum_recall_score": 0.11999999731779099,
+          "recall": {
+            "cue_lexical": 0.800000011920929,
+            "cue_tag": 0.20000000298023224,
+            "lexical_coverage": 0.699999988079071,
+            "lexical_jaccard": 0.30000001192092896,
+            "listing_scale": 0.5,
+            "match_floor": 0.15000000596046448,
+            "meta_confidence": 0.20000000298023224,
+            "meta_prospective": 0.10000000149011612,
+            "meta_provenance": 0.25,
+            "meta_recency": 0.25,
+            "meta_salience": 0.20000000298023224,
+            "metadata_share": 0.44999998807907104,
+            "overdue_floor": 0.15000000596046448,
+            "prospective_scale_days": 7.0,
+            "recency_scale_days": 30.0,
+            "redundancy_penalty": 0.3499999940395355,
+            "redundant_at": 0.800000011920929,
+            "relevance_base": 0.550000011920929,
+            "undated_commitment_urgency": 0.3499999940395355,
+            "unverified_provenance_factor": 0.6499999761581421
+          },
+          "recall_limit": 10,
+          "working_set_limit": 12
+        },
+        "provenance_retained": 5183,
+        "query_clock_ms": 1700000000000,
+        "rejected": [],
+        "reopen_ms": 45.4993
+      },
+      "engines": {
+        "hikmah": {
+          "metrics": {
+            "precision@1": 0.42333333333333334,
+            "recall@1": 0.40972222222222227,
+            "hit@1": 0.42333333333333334,
+            "precision@5": 0.12400000000000001,
+            "recall@5": 0.5806666666666667,
+            "hit@5": 0.6066666666666667,
+            "precision@10": 0.07133333333333335,
+            "recall@10": 0.6493888888888889,
+            "hit@10": 0.6733333333333333,
+            "mrr@10": 0.5093346560846561,
+            "ndcg@10": 0.5357937917684638
+          },
+          "empty_results": 0,
+          "latency_ms": {
+            "p50": 555.1287695,
+            "p95": 867.3782579000001
+          }
+        },
+        "bm25": {
+          "metrics": {
+            "precision@1": 0.5333333333333333,
+            "recall@1": 0.5148333333333333,
+            "hit@1": 0.5333333333333333,
+            "precision@5": 0.15733333333333335,
+            "recall@5": 0.7259444444444444,
+            "hit@5": 0.75,
+            "precision@10": 0.08733333333333335,
+            "recall@10": 0.7909444444444444,
+            "hit@10": 0.81,
+            "mrr@10": 0.6276177248677248,
+            "ndcg@10": 0.6616762967340878
+          },
+          "empty_results": 0,
+          "latency_ms": {
+            "p50": 0.7170985,
+            "p95": 0.9197686
+          }
+        }
+      },
+      "hikmah_minus_bm25": {
+        "ndcg@10": {
+          "mean": -0.12588250496562398,
+          "query_bootstrap_95": [
+            -0.16250067876200888,
+            -0.09049831476345375
+          ],
+          "replicates": 2000,
+          "seed": 20260926
+        },
+        "recall@10": {
+          "mean": -0.14155555555555557,
+          "query_bootstrap_95": [
+            -0.18305555555555555,
+            -0.10044027777777781
+          ],
+          "replicates": 2000,
+          "seed": 20260926
+        }
+      },
+      "raw_sha256": "cdc362a7023544c941361a00856fc9aa66f09f6a1ec4b4788aaac483bd804ef8",
+      "per_query_sha256": "d72d54619b4f817b74d98b1fe286131e82cdf4c4f47773a7f9a71046e5a63d55",
+      "manifest": {
+        "sha256": "536e14446a0ba56ed1398ab1055f39fe852686ecad24a6306c80c490fa8e0165",
+        "md5": "5f7d1de60b170fc8027bb7898e2efca1",
+        "documents": 5183,
+        "queries": 300,
+        "qrels": 339,
+        "labels": "Expert-annotated scientific claim evidence; BEIR test split.",
+        "terms": "Claims/annotations CC BY 4.0; abstracts ODC-By 1.0.",
+        "source": "https://github.com/allenai/scifact",
+        "name": "scifact",
+        "selected_queries": 300,
+        "full_test_split": true,
+        "exact_duplicate_content_rows": 0,
+        "member_sha256": {
+          "corpus.jsonl": "dec31c8182f3d744c7d2c09423756fd1d17cbef75808db13ba01cc0aab4d1ac6",
+          "queries.jsonl": "8ff84a7c903f722981cd8d595c022660140c51867b27608a6d4910db86080313",
+          "qrels/test.tsv": "0864bb985e0ca2367ba217977e72004d549054b2b06666ed9d4825ac7c21284c"
+        },
+        "prepared_sha256": {
+          "corpus.jsonl": "92b719555b337f128368d5f3ee6832b87e4baf34c7426d789714ef683b982730",
+          "queries.jsonl": "2ac08e33380aa2e33e25afc80e2f81820395da84577aae980bc80e342579b5c0",
+          "qrels.json": "096e0edcdff8dd7584130e2d861257c3b9b8a7809edac4d9c1ad3cc311bf7f3e"
+        },
+        "download_url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip"
+      },
+      "positive_selected_qrels_on_rejected_documents": 0,
+      "ndcg_query_comparison": {
+        "hikmah_higher": 35,
+        "bm25_higher": 102,
+        "tied": 163
+      }
+    },
+    "nfcorpus": {
+      "queries": 323,
+      "ingestion": {
+        "admitted": 3633,
+        "bm25": {
+          "b": 0.75,
+          "k1": 1.2
+        },
+        "bm25_index_ms": 198.41622599999968,
+        "corpus_total": 3633,
+        "ingest_both_ms": 2708.7071840000003,
+        "kind": "loaded",
+        "policy": {
+          "allow_sensitive_persistence": false,
+          "calibration_min_outcomes": 50,
+          "consolidation_min_confidence": 0.6000000238418579,
+          "consolidation_min_independent_sources": 2,
+          "consolidation_min_support": 2,
+          "minimum_recall_score": 0.11999999731779099,
+          "recall": {
+            "cue_lexical": 0.800000011920929,
+            "cue_tag": 0.20000000298023224,
+            "lexical_coverage": 0.699999988079071,
+            "lexical_jaccard": 0.30000001192092896,
+            "listing_scale": 0.5,
+            "match_floor": 0.15000000596046448,
+            "meta_confidence": 0.20000000298023224,
+            "meta_prospective": 0.10000000149011612,
+            "meta_provenance": 0.25,
+            "meta_recency": 0.25,
+            "meta_salience": 0.20000000298023224,
+            "metadata_share": 0.44999998807907104,
+            "overdue_floor": 0.15000000596046448,
+            "prospective_scale_days": 7.0,
+            "recency_scale_days": 30.0,
+            "redundancy_penalty": 0.3499999940395355,
+            "redundant_at": 0.800000011920929,
+            "relevance_base": 0.550000011920929,
+            "undated_commitment_urgency": 0.3499999940395355,
+            "unverified_provenance_factor": 0.6499999761581421
+          },
+          "recall_limit": 10,
+          "working_set_limit": 12
+        },
+        "provenance_retained": 3633,
+        "query_clock_ms": 1700000000000,
+        "rejected": [],
+        "reopen_ms": 33.337513
+      },
+      "engines": {
+        "hikmah": {
+          "metrics": {
+            "precision@1": 0.3188854489164087,
+            "recall@1": 0.03946584937894982,
+            "hit@1": 0.3188854489164087,
+            "precision@5": 0.21981424148606812,
+            "recall@5": 0.09911226106202685,
+            "hit@5": 0.5572755417956656,
+            "precision@10": 0.1665634674922601,
+            "recall@10": 0.12049996350354658,
+            "hit@10": 0.6160990712074303,
+            "mrr@10": 0.4193031598604354,
+            "ndcg@10": 0.23802357180281508
+          },
+          "empty_results": 16,
+          "latency_ms": {
+            "p50": 165.762905,
+            "p95": 421.06737359999994
+          }
+        },
+        "bm25": {
+          "metrics": {
+            "precision@1": 0.43343653250773995,
+            "recall@1": 0.056695547127861685,
+            "hit@1": 0.43343653250773995,
+            "precision@5": 0.27801857585139317,
+            "recall@5": 0.1195418404108694,
+            "hit@5": 0.6253869969040248,
+            "precision@10": 0.21671826625386997,
+            "recall@10": 0.14914998643489022,
+            "hit@10": 0.6873065015479877,
+            "mrr@10": 0.5150830507641653,
+            "ndcg@10": 0.3069448390508603
+          },
+          "empty_results": 25,
+          "latency_ms": {
+            "p50": 0.129265,
+            "p95": 0.6677005999999999
+          }
+        }
+      },
+      "hikmah_minus_bm25": {
+        "ndcg@10": {
+          "mean": -0.06892126724804516,
+          "query_bootstrap_95": [
+            -0.08635004729499579,
+            -0.051944727925546226
+          ],
+          "replicates": 2000,
+          "seed": 20260926
+        },
+        "recall@10": {
+          "mean": -0.02865002293134363,
+          "query_bootstrap_95": [
+            -0.041343440872965716,
+            -0.017289170687851543
+          ],
+          "replicates": 2000,
+          "seed": 20260926
+        }
+      },
+      "raw_sha256": "8d43d45f82f52936fe393af39f1352b64de542c9ecea98d7dbb7d1757adad81a",
+      "per_query_sha256": "c18258939ce9db2babb9a1d8def4f9a21c2d0b93f3ec35a45df99e803cd1d58d",
+      "manifest": {
+        "sha256": "efe5be03f8c5b86a5870102d0599d227c8c6e2484328e68c6522560385671b0b",
+        "md5": "a89dba18a62ef92f7d323ec890a0d38d",
+        "documents": 3633,
+        "queries": 323,
+        "qrels": 12334,
+        "labels": "Automatically derived direct/indirect link and tag relevance, grades 1/2; BEIR subset.",
+        "terms": "Primary source grants free academic use; consult source for other uses.",
+        "source": "https://www.cl.uni-heidelberg.de/statnlpgroup/nfcorpus/",
+        "name": "nfcorpus",
+        "selected_queries": 323,
+        "full_test_split": true,
+        "exact_duplicate_content_rows": 40,
+        "member_sha256": {
+          "corpus.jsonl": "10cc83ef1826b1425e6a87090b5140b39b27755d5a27e48215a88611c899991f",
+          "queries.jsonl": "d024e6621b84925d485ae473d316a0c3af31c62c8068a59fb29d22f7613aef2a",
+          "qrels/test.tsv": "f8fba6ef3d4dd9c3a242a8ba4ae38276fc3622fce7dcbae764766d564542fd2a"
+        },
+        "prepared_sha256": {
+          "corpus.jsonl": "1cc32a956323813527359f7ac820e3cc04729cd38f4f1f7bcfac77cd12976967",
+          "queries.jsonl": "3bb3c55529665d02aa0c6ef3c4fdc4d01843dfa9893f0009db7f5b7551c38460",
+          "qrels.json": "12550e956e7cbd989419f3ef0240f107d8b9720677b1661bea83703310707140"
+        },
+        "download_url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip"
+      },
+      "positive_selected_qrels_on_rejected_documents": 0,
+      "ndcg_query_comparison": {
+        "hikmah_higher": 49,
+        "bm25_higher": 140,
+        "tied": 134
+      }
+    },
+    "fiqa": {
+      "queries": 100,
+      "ingestion": {
+        "admitted": 57599,
+        "bm25": {
+          "b": 0.75,
+          "k1": 1.2
+        },
+        "bm25_index_ms": 1968.775408999984,
+        "corpus_total": 57638,
+        "ingest_both_ms": 9328.916556999999,
+        "kind": "loaded",
+        "policy": {
+          "allow_sensitive_persistence": false,
+          "calibration_min_outcomes": 50,
+          "consolidation_min_confidence": 0.6000000238418579,
+          "consolidation_min_independent_sources": 2,
+          "consolidation_min_support": 2,
+          "minimum_recall_score": 0.11999999731779099,
+          "recall": {
+            "cue_lexical": 0.800000011920929,
+            "cue_tag": 0.20000000298023224,
+            "lexical_coverage": 0.699999988079071,
+            "lexical_jaccard": 0.30000001192092896,
+            "listing_scale": 0.5,
+            "match_floor": 0.15000000596046448,
+            "meta_confidence": 0.20000000298023224,
+            "meta_prospective": 0.10000000149011612,
+            "meta_provenance": 0.25,
+            "meta_recency": 0.25,
+            "meta_salience": 0.20000000298023224,
+            "metadata_share": 0.44999998807907104,
+            "overdue_floor": 0.15000000596046448,
+            "prospective_scale_days": 7.0,
+            "recency_scale_days": 30.0,
+            "redundancy_penalty": 0.3499999940395355,
+            "redundant_at": 0.800000011920929,
+            "relevance_base": 0.550000011920929,
+            "undated_commitment_urgency": 0.3499999940395355,
+            "unverified_provenance_factor": 0.6499999761581421
+          },
+          "recall_limit": 10,
+          "working_set_limit": 12
+        },
+        "provenance_retained": 57599,
+        "query_clock_ms": 1700000000000,
+        "rejected": [
+          {
+            "id": "115636",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "117276",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "12229",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "126502",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "138418",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "14135",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "153104",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "167128",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "169220",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "189754",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "206368",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "207473",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "215635",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "237392",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "248226",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "254541",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "290110",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "318612",
+            "reason": "invalid input: trace content appears to contain a credential; memory never stores secrets. Record where the secret is kept (for example a vault path), not its value"
+          },
+          {
+            "id": "319894",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "325407",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "33445",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "356535",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "358213",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "360125",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "399083",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "40982",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "414219",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "441462",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "447488",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "470232",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "486245",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "528558",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "54960",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "552533",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "572451",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "587667",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "597929",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "66248",
+            "reason": "invalid input: trace content cannot be empty"
+          },
+          {
+            "id": "7915",
+            "reason": "invalid input: trace content cannot be empty"
+          }
+        ],
+        "reopen_ms": 386.493161
+      },
+      "engines": {
+        "hikmah": {
+          "metrics": {
+            "precision@1": 0.09,
+            "recall@1": 0.04366666666666666,
+            "hit@1": 0.09,
+            "precision@5": 0.046000000000000006,
+            "recall@5": 0.109,
+            "hit@5": 0.19,
+            "precision@10": 0.033,
+            "recall@10": 0.15666666666666665,
+            "hit@10": 0.27,
+            "mrr@10": 0.13140079365079366,
+            "ndcg@10": 0.10838509592023847
+          },
+          "empty_results": 0,
+          "latency_ms": {
+            "p50": 3579.108407,
+            "p95": 8159.127046399998
+          }
+        },
+        "bm25": {
+          "metrics": {
+            "precision@1": 0.19,
+            "recall@1": 0.08825,
+            "hit@1": 0.19,
+            "precision@5": 0.098,
+            "recall@5": 0.2268452380952381,
+            "hit@5": 0.35,
+            "precision@10": 0.065,
+            "recall@10": 0.29201190476190475,
+            "hit@10": 0.47,
+            "mrr@10": 0.27054761904761904,
+            "ndcg@10": 0.22709114366078928
+          },
+          "empty_results": 0,
+          "latency_ms": {
+            "p50": 10.602940499999999,
+            "p95": 12.79627135
+          }
+        }
+      },
+      "hikmah_minus_bm25": {
+        "ndcg@10": {
+          "mean": -0.11870604774055081,
+          "query_bootstrap_95": [
+            -0.17374009818174413,
+            -0.0667563983208365
+          ],
+          "replicates": 2000,
+          "seed": 20260926
+        },
+        "recall@10": {
+          "mean": -0.1353452380952381,
+          "query_bootstrap_95": [
+            -0.2125125,
+            -0.059511607142857144
+          ],
+          "replicates": 2000,
+          "seed": 20260926
+        }
+      },
+      "raw_sha256": "8fa2b2732bfc2defc9b2b0a57069e231686c20b067c00849b88e79dc9e9a655c",
+      "per_query_sha256": "1f44224eb91a0c90d5e2628d175d12f0272d6b39034425b85ae3282913727403",
+      "manifest": {
+        "sha256": "32c7df99ed21252fdfb2cf3f5673502a8d245ee0c44c4a133570d92ce2b3ad02",
+        "md5": "17918ed23cd04fb15047f73e6c3bd9d9",
+        "documents": 57638,
+        "queries": 648,
+        "qrels": 1706,
+        "labels": "Published financial question-answer relevance judgments; BEIR test split.",
+        "terms": "BEIR dataset card specifies CC BY-SA 4.0.",
+        "source": "https://huggingface.co/datasets/BeIR/fiqa",
+        "name": "fiqa",
+        "selected_queries": 100,
+        "full_test_split": false,
+        "exact_duplicate_content_rows": 39,
+        "member_sha256": {
+          "corpus.jsonl": "ff593e4df9933955dc3af83be0c3fa28ac7465f627e08c2e53593e734d506517",
+          "queries.jsonl": "eede1e61d4a0188940239b53ebc2da91f577a6a34679c812d1eb9090c29877bc",
+          "qrels/test.tsv": "6adc2a640dcdd22bb8b3858f89107adef2a7c3db20a63550dfa7a0f71e379e44"
+        },
+        "prepared_sha256": {
+          "corpus.jsonl": "4031be05f218731adb4da20c427d934e46a76330f879e7d562066726fa5201f0",
+          "queries.jsonl": "9af81040c0d7b1f8d46ead714a8a9e54f597103092b6198d0847f845e80d97c0",
+          "qrels.json": "7c89e40dd4f02c04eae77fab511386c665407c8869fc0cbd5569bcfea3dba720"
+        },
+        "download_url": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/fiqa.zip"
+      },
+      "positive_selected_qrels_on_rejected_documents": 0,
+      "ndcg_query_comparison": {
+        "hikmah_higher": 10,
+        "bm25_higher": 40,
+        "tied": 50
+      }
+    }
+  },
+  "limits": [
+    "Public document retrieval with original relevance labels; not a real episodic-memory or agent-task benchmark.",
+    "NFCorpus labels derive from links/tags; these datasets do not share one human-labeling protocol.",
+    "Unjudged documents count as nonrelevant under the published qrels; incomplete judgments can penalize useful results.",
+    "Hikmah metadata are held constant and unverified; recall_limit is 10 rather than the default 8. Other policy defaults are retained.",
+    "BM25 uses its own documented tokenizer and an index; query latency excludes indexing and ingestion for both systems.",
+    "No test-label tuning, LLM, embeddings, API calls, custom tags, query rewriting, or relevance labels enter retrieval.",
+    "Corrected/stale-memory checks are separately generated structured histories, not real-world correction accuracy.",
+    "Source/locator retention checks preserve caller assertions; they do not authenticate the original claims.",
+    "One sequential local run per dataset; warm OS caches, no latency confidence interval or cross-machine speed claim.",
+    "Metrics macro-average queries within each dataset; datasets are not pooled into one accuracy score."
+  ],
+  "elapsed_seconds": 669.8801062469993,
+  "corrections": {
+    "cases": 100,
+    "kind": "synthetic_corrections",
+    "latest_hits": 100,
+    "latest_hits_after_restart": 100,
+    "limits": [
+      "Generated structured histories; not extracted real incident corrections.",
+      "Subject variants of one generated template, not independent real incidents or a proof across all histories.",
+      "A query matching only retired terms abstains; no semantic alias expansion is implied."
+    ],
+    "model_overwrite_rejections": 100,
+    "ok": true,
+    "old_only_query_results": 0,
+    "provenance_retained": 300,
+    "stale_hits": 0,
+    "supersession_link_hits": 100
+  },
+  "measurement_location": "Local Codex execution workspace; not the user VPS.",
+  "model_requests": 0,
+  "validation": {
+    "rust_tests": {
+      "passed": 160,
+      "failed": 0,
+      "ignored": 2
+    },
+    "ignored_tests": [
+      "live Jev adapter: credentials/network required",
+      "release-only long-text performance gate: not run in this evaluation"
+    ],
+    "python_evaluator_tests_passed": 18,
+    "retrieval_evaluator_tests_passed": 10,
+    "fmt_check": "pass",
+    "clippy_default_and_no_default_features": "pass",
+    "package_validation": "pass",
+    "truth_gate": "108 golden + 14 payload + robustness checks pass",
+    "log_sha256": {
+      "tests.log": "a93f07694116d952df0647dcb8d73b7f9e9b2c520f662c8eb9501cd0422525f8",
+      "validate.log": "e45d72c1d15579254cdaf629da39cf2775734f60f939496e143aa750e20b1f7d",
+      "evaluator.log": "978e69f53ac81de2ffa09750df4e3b2c3328e2bf6bca00003d6fd66f0c7362ce",
+      "clippy.log": "694e0b6cfd3a03736cf30f3bb3e76676c0f9358a4e4781baeaa2d4e634949cad",
+      "fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "truth-gate.log": "844dbcbaf69f8db291f90a7982d3649dd997b88d4e708e54e2f1e572e15fd7ae"
+    },
+    "note": "Formatting, default Clippy, the complete Rust suite, all Python evaluator tests, package validation and Truth Gate were checked again after measurement on the exact source revision. No-default-features Clippy and the rebuilt adapter checks passed before measurement."
+  },
+  "published_rankings": {
+    "scifact": {
+      "path": "bench/evidence/retrieval-20260926-scifact.tsv",
+      "sha256": "cf351b192f51ef371849986a7b873bee1fb94d1741d9a6fb4d2d6e8f1852411b",
+      "queries": 300
+    },
+    "nfcorpus": {
+      "path": "bench/evidence/retrieval-20260926-nfcorpus.tsv",
+      "sha256": "fafa82cd993da197cc53779f2aed81df44920a7c1e7ff14fe6f83f142b9abda5",
+      "queries": 323
+    },
+    "fiqa": {
+      "path": "bench/evidence/retrieval-20260926-fiqa.tsv",
+      "sha256": "07dcb83fbba807068c8aa90ac653f55f53d6746ce6b7b675e4bba4aa06735ec1",
+      "queries": 100
+    }
+  }
+}

@@ -8,6 +8,9 @@ on:
       - 'bench/test_kernel_bench.py'
       - 'bench/run_kernel.sh'
       - 'bench/fixtures/gate-corpus-example.json'
+      - 'bench/retrieval_bench.py'
+      - 'bench/test_retrieval_bench.py'
+      - 'bench/run_retrieval.sh'
       - '.github/workflows/kernel-bench-checks.yml'
       - 'Cargo.lock'
   pull_request:
@@ -35,6 +38,10 @@ jobs:
         run: bash bench/run_kernel.sh --sizes 1000 --queries 12 --gate-corpus bench/fixtures/gate-corpus-example.json --out .benchmark-results/kernel-ci
       - name: Evaluator tests against the compiled kernel
         run: python3 -m unittest discover -s bench -p test_kernel_bench.py -v
+      - name: Build labeled retrieval adapter without model networking
+        run: cargo build --locked --release --no-default-features -p hikmah-kernel --example retrieval_bench
+      - name: Labeled retrieval evaluator and actual kernel bridge checks
+        run: python3 -m unittest discover -s bench -p test_retrieval_bench.py -v
       - name: Publish measured summary to job log
         if: always()
         run: |
