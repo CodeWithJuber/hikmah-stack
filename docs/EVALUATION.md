@@ -48,7 +48,9 @@ These run without new infrastructure:
 - **Memory:** stale-belief activation after supersession (`tests/recall.rs`: a superseded belief is not recalled by default, even for a query that matches only its own words, and its correction is), duplicate folding, relevance gating, conflicts shown beside recalled claims (`tests/conflicts.rs`), and sensitive-persistence and credential refusal (`tests/ledger.rs`) are covered by integration tests (`runtime/hikmah-kernel/tests/`). These are pass/fail regression tests, not measured rates on real data.
 - **Ledger:** tamper, truncation (head file), forged chain-valid appends past the head (refused until a person runs `verify-ledger --accept-tail`, which the CLI refuses inside an agent session), torn tail, legacy format, concurrent writers, and verification during concurrent writes (no false alarm) are covered by tests; replay time can be measured with `hikmah verify-ledger` on a large store. The chain is unkeyed, so an append by someone who can also rewrite or delete the head file is not detectable without a pinned head.
 
-Still not measurable without new data: recall precision@k on a labeled corpus, and provenance retention across consolidation.
+Public labeled **document retrieval** is measurable with the protocol below. Real
+episodic-memory retrieval and provenance retention across consolidation still need
+appropriate labeled histories and measurements.
 
 ## Reproducible offline capability measurements
 
@@ -60,3 +62,14 @@ records source hashes and distinguishes synthetic regression fixtures from real 
 data. See [the protocol and limitations](../bench/KERNEL_BENCHMARK.md). This provides measured
 synthetic runtime/invariant results; it does not supply the missing real-data memory labels
 or a host-model behavioural evaluation.
+
+## Public labeled retrieval
+
+[`bench/run_retrieval.sh`](../bench/run_retrieval.sh) evaluates the actual kernel's
+recall against pinned SciFact, NFCorpus and FiQA test judgments, with an explicit
+BM25 baseline and full-corpus distractors. It reports precision/recall/hit@k,
+MRR/NDCG@10, latency, admitted/rejected documents and provenance retention across
+replay. Test labels never enter retrieval input. Structured correction/stale-memory
+checks remain a separate synthetic section. See [protocol, source terms and
+limits](../bench/LABELED_RETRIEVAL.md). These are public document relevance tasks,
+not evidence that all persistent-memory or agent capabilities have been evaluated.
