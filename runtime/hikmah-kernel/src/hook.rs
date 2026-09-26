@@ -943,27 +943,80 @@ mod tests {
         assert_eq!(rows[1]["path"], "rules");
     }
 
-    #[test]
-    fn long_unpunctuated_text_stays_fast() {
-        for text in [
-            "not done ".repeat(50_000),
-            // Every promise looks for a user condition in its clause, and every noun-headed
-            // marker looks for an "is still open" word after it; both stay bounded.
-            format!("done {}", "if you want i'll test ".repeat(10_000)),
-            format!("done {}", "the todo list widget ".repeat(10_000)),
-            format!("done {}", "search placeholder ".repeat(10_000)),
-            format!("done todo{}list", " ".repeat(200_000)),
-            // Comma segments, fronted conditions, resolution checks, and dots inside file names.
-            format!("done {}", "if you want, and i'll test, ".repeat(10_000)),
-            format!(
-                "done {}",
-                "the todo comment in a.ts is now handled, ".repeat(10_000)
+    fn long_text_cases() -> Vec<(&'static str, String, bool)> {
+        vec![
+            ("negation", "not done ".repeat(50_000), false),
+            (
+                "offers",
+                format!("done {}", "if you want i'll test ".repeat(10_000)),
+                false,
             ),
-            format!("done todo comment{}", ".x".repeat(100_000)),
-        ] {
+            (
+                "named widget",
+                format!("done {}", "the todo list widget ".repeat(10_000)),
+                false,
+            ),
+            (
+                "placeholder owner",
+                format!("done {}", "search placeholder ".repeat(10_000)),
+                false,
+            ),
+            (
+                "whitespace",
+                format!("done todo{}list", " ".repeat(200_000)),
+                false,
+            ),
+            (
+                "coordinated promise",
+                format!("done {}", "if you want, and i'll test, ".repeat(10_000)),
+                true,
+            ),
+            (
+                "resolved marker",
+                format!(
+                    "done {}",
+                    "the todo comment in a.ts is now handled, ".repeat(10_000)
+                ),
+                false,
+            ),
+            (
+                "filename dots",
+                format!("done todo comment{}", ".x".repeat(100_000)),
+                true,
+            ),
+        ]
+    }
+
+    #[test]
+    fn long_unpunctuated_text_has_expected_verdicts() {
+        for (name, text, expected) in long_text_cases() {
+            assert_eq!(rules_verdict(&text), expected, "{name}");
+        }
+    }
+
+    // A wall-clock budget is a performance gate, not a load-independent correctness assertion.
+    // CI and bench/run_kernel.sh run this explicitly in release mode, with one test thread.
+    // Preserve the original two-second ceiling; do not relax it to hide a regression.
+    #[test]
+    #[ignore = "explicit release performance gate; see bench/KERNEL_BENCHMARK.md"]
+    #[allow(clippy::assertions_on_constants)] // Runtime misuse check for an explicitly ignored test.
+    fn long_unpunctuated_text_stays_fast() {
+        assert!(!cfg!(debug_assertions), "run timing gate with --release");
+        let _ = rules_verdict("Done. TODO: tests"); // regex compilation is a separate startup cost
+        for (name, text, expected) in long_text_cases() {
             let started = std::time::Instant::now();
-            let _ = rules_verdict(&text);
-            assert!(started.elapsed().as_secs() < 2);
+            let verdict = rules_verdict(&text);
+            let elapsed = started.elapsed();
+            eprintln!(
+                "{name}: {:.3} ms ({} bytes)",
+                elapsed.as_secs_f64() * 1000.0,
+                text.len()
+            );
+            assert_eq!(verdict, expected, "{name}");
+            assert!(
+                elapsed < std::time::Duration::from_secs(2),
+                "{name}: {elapsed:?}"
+            );
         }
     }
 

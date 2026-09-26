@@ -1,0 +1,42 @@
+name: kernel-bench-checks
+
+on:
+  push:
+    paths:
+      - 'runtime/**'
+      - 'bench/kernel_bench.py'
+      - 'bench/test_kernel_bench.py'
+      - 'bench/run_kernel.sh'
+      - 'bench/fixtures/gate-corpus-example.json'
+      - '.github/workflows/kernel-bench-checks.yml'
+      - 'Cargo.lock'
+  pull_request:
+    paths:
+      - 'runtime/**'
+      - 'bench/**'
+      - '.github/workflows/kernel-bench-checks.yml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Offline kernel measurements and explicit release timing gate
+        run: bash bench/run_kernel.sh --sizes 1000 --queries 12 --gate-corpus bench/fixtures/gate-corpus-example.json --out .benchmark-results/kernel-ci
+      - name: Evaluator tests against the compiled kernel
+        run: python3 -m unittest discover -s bench -p test_kernel_bench.py -v
+      - name: Publish measured summary to job log
+        if: always()
+        run: |
+          test ! -f .benchmark-results/kernel-ci/report.md || cat .benchmark-results/kernel-ci/report.md
+          test ! -f .benchmark-results/kernel-ci/summary.json || cat .benchmark-results/kernel-ci/summary.json
