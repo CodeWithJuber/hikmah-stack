@@ -1,15 +1,72 @@
 # Hikmah Stack
 
-**A deterministic Rust memory and reliability kernel for AI agents.**
+**Give your AI agent a memory you can audit.**
+
+Hikmah Stack is a deterministic Rust memory and reliability kernel for AI agents — typed, provenance-stamped, append-only. It keeps selected agent responsibilities outside a generative model's hidden state — what the agent remembers, what it claims, what it commits to, how it decides — in local, inspectable, verifiable mechanisms.
 
 [![validate](https://github.com/CodeWithJuber/hikmah-stack/actions/workflows/validate.yml/badge.svg)](https://github.com/CodeWithJuber/hikmah-stack/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Hikmah Stack is an open-source reference implementation for keeping selected agent responsibilities outside a generative model's hidden state. Its Rust kernel provides local, inspectable mechanisms for provenance-bearing memory, contradiction detection, bounded recall, commitments, symbolic planning, decision controls, and narrow completion checks.
-
 > **Portfolio summary:** This repository demonstrates systems design and hands-on Rust implementation for deterministic Agentic AI memory and reliability controls. It is a working local proof of concept, not an end-to-end enterprise GenAI platform.
 
 Maintained by [Juber Shaikh](https://github.com/CodeWithJuber) · MIT licensed
+
+## Why Hikmah Stack?
+
+LLM agents fail in predictable ways. Hikmah gives you deterministic machinery — local, inspectable, test-covered — aimed at the failure modes that hurt:
+
+**Your agent invents its own history.** Every memory is a typed trace with provenance, confidence, privacy class, and deadlines. Traces a model wrote are stamped and can *never* be marked verified: the kernel refuses to let an agent verify its own memory.
+
+**Your agent contradicts itself and nobody notices.** Structured claims get real contradiction detection. Conflicting claims stay visible side-by-side and `hikmah conflicts` lists every open one. Detection only — the kernel never silently picks a winner.
+
+**Your agent says "done" when it isn't.** The Truth Gate screens completion claims at host stop time. Engine mode is a *measured* screen: it catches about one false completion in six — deliberately not a fact-checker.
+
+**Your agent can't show its calibration.** Record predictions, record outcomes, get Brier + ECE per forecaster family. A family counts as *calibrated* only with at least 50 outcomes, a passing Spiegelhalter's Z test (α=0.05), and a Brier that beats the base rate.
+
+**Your agent forgets its deadlines.** Prospective commitments with deadlines surface automatically when overdue — no recall query needed.
+
+Every claim above is backed by executable evidence in the table below, and the [Maturity boundary](#maturity-boundary) says plainly what's implemented, what's measured, and what this repo does not claim.
+
+## Try it in 5 minutes
+
+One toolchain, no services, no API keys, everything local. Five commands tell the kernel's whole story: write a memory, read it back, watch two sources disagree, see the conflict listed, prove the chain is intact.
+
+```bash
+git clone https://github.com/CodeWithJuber/hikmah-stack.git
+cd hikmah-stack
+
+# 1. Write a memory your agent can't quietly rewrite
+cargo run -p hikmah-kernel -- init
+cargo run -p hikmah-kernel -- remember --kind observation \
+  --content "Deploys after 18:00 fail: the database lock times out" \
+  --source cli --tag deploy --confidence 0.9
+
+# 2. Read it back — recall only returns memories that match your query
+cargo run -p hikmah-kernel -- recall --query "why do evening deploys fail"
+
+# 3. Two sources disagree about the database port. Both are kept.
+cargo run -p hikmah-kernel -- remember --kind belief \
+  --claim-key "db.primary.port" --claim-value "5432" \
+  --content "Primary database listens on 5432" --source runbook
+cargo run -p hikmah-kernel -- remember --kind belief \
+  --claim-key "db.primary.port" --claim-value "5433" \
+  --content "Primary database moved to 5433" --source migration-notes
+
+# 4. The contradiction is listed, not hidden
+cargo run -p hikmah-kernel -- conflicts
+
+# 5. The chain proves nothing was edited, reordered, or injected
+cargo run -p hikmah-kernel -- verify-ledger
+```
+
+First build takes a few minutes (Rust compiles the kernel and its dependencies); the demo itself runs in seconds.
+
+**Liked what you saw?**
+- ⭐ [Star the repo](https://github.com/CodeWithJuber/hikmah-stack) — it tells GitHub this kind of infrastructure matters.
+- 🛠 Drop it into your agent stack: the [portable skills](skills/) and [host adapters](#portable-skills-and-host-adapters) below install into Codex, Claude Code, Kimi, and OpenClaw.
+- 💬 Open an [issue](https://github.com/CodeWithJuber/hikmah-stack/issues) with the failure mode you'd cover next.
+
+(The full reference quickstart — planning, decisions, calibration, the optional Jev engine — is further below.)
 
 ## Recruiter-verifiable evidence
 
