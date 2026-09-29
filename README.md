@@ -68,6 +68,14 @@ First build takes a few minutes (Rust compiles the kernel and its dependencies);
 
 (The full reference quickstart — planning, decisions, calibration, the optional Jev engine — is further below.)
 
+## See it in action
+
+The 5-minute flow above, recorded for real — the actual `hikmah` binary (v3.1.0, built from this repo's source):
+
+![hikmah init, remember, recall, verify-ledger](.github/assets/hikmah-stack-memory.gif)
+
+`hikmah init` creates a memory store; `remember` appends a belief with provenance (returned with a trace id, claim key/value); `recall` brings it back with relevance scores across lexical, recency, and salience channels; `verify-ledger` reports `"ok": true` — the hash-chained append-only ledger verifies clean.
+
 ## Recruiter-verifiable evidence
 
 The table below separates executable evidence from architectural intent.
