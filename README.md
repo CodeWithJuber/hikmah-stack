@@ -7,7 +7,7 @@ Hikmah Stack is a deterministic Rust memory and reliability kernel for AI agents
 [![validate](https://github.com/CodeWithJuber/hikmah-stack/actions/workflows/validate.yml/badge.svg)](https://github.com/CodeWithJuber/hikmah-stack/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Portfolio summary:** This repository demonstrates systems design and hands-on Rust implementation for deterministic Agentic AI memory and reliability controls. It is a working local proof of concept, not an end-to-end enterprise GenAI platform.
+> **Positioning:** Hikmah Stack is a deterministic governance kernel — memory you can audit. The mechanisms below are implemented, tested, and measured; the [Maturity boundary](#maturity-boundary) states plainly what this repo does not claim.
 
 Maintained by [Juber Shaikh](https://github.com/CodeWithJuber) · MIT licensed
 
@@ -85,7 +85,7 @@ The table below separates executable evidence from architectural intent.
 | Typed agent memory with provenance, confidence, privacy, deadlines, claims, and correction links | [`Trace`, `Provenance`, and validation](runtime/hikmah-kernel/src/trace.rs) | Implemented; model-authored traces can never be marked verified. `source` and `verified` are the caller's claims, not authenticated; a write from a detected AI agent session is stamped `agent-session:<host>:<id>` and cannot be marked verified |
 | Append-only, sequence-numbered, hash-chained local ledger | [`MemoryStore`](runtime/hikmah-kernel/src/ledger.rs) and [ledger tests](runtime/hikmah-kernel/tests/ledger.rs) | Implemented and tested: validate-before-write, exclusive file lock, concurrent writers, torn-tail repair, head file for truncation and unacknowledged appends, pinned-head check, legacy v1 ledgers |
 | Contradiction-aware structured claims | [Conflict detection](runtime/hikmah-kernel/src/claims.rs) and tests ([consolidation](runtime/hikmah-kernel/tests/consolidation.rs), [conflicts](runtime/hikmah-kernel/tests/conflicts.rs)) | Implemented and tested (Unicode NFC, case-sensitive values, supersession); recall lists open conflicts and supersession links beside each result, and `hikmah conflicts` lists every open conflict. Detection only: the kernel never picks a winner |
-| Relevance-gated contextual recall with metadata scaling and duplicate folding | [Recall](runtime/hikmah-kernel/src/recall.rs) and [recall tests](runtime/hikmah-kernel/tests/recall.rs) | Implemented and tested; lexical, not semantic |
+| Relevance-gated contextual recall with metadata scaling and duplicate folding | [Recall](runtime/hikmah-kernel/src/recall.rs) and [recall tests](runtime/hikmah-kernel/tests/recall.rs) | Implemented and tested; lexical, not semantic. Every hit carries a top-level `trace_id` and its relevance channels; `hikmah why <trace-id>` prints the trace's full provenance chain |
 | Evidence-preserving consolidation proposals | [`consolidation_proposals`](runtime/hikmah-kernel/src/consolidation.rs) | Implemented and tested; no automatic promotion; model output never counts as support |
 | Prospective commitments with deadlines and fulfilment | [`commitments_due`](runtime/hikmah-kernel/src/prospective.rs), CLI `--deadline` and `fulfill` | Implemented and tested |
 | Bounded symbolic planning | [Planner](runtime/hikmah-kernel/src/planner.rs) and [tests](runtime/hikmah-kernel/tests/planner.rs) | Implemented and tested (depth and state budgets) |
@@ -107,7 +107,7 @@ The table below separates executable evidence from architectural intent.
 | Retrieval | Deterministic relevance gate (terms or tags must match), light stemming, CJK bigrams, metadata scaling, duplicate folding; no embeddings |
 | Model integration | Typed `DecisionEngine` port with `NoEngine` and an opt-in TypeSafe Jev adapter; the text `ProposalEngine` still ships only `NoModel` |
 | Agent packaging | Portable instruction skills and thin Codex, Claude Code, and Kimi manifests |
-| Tests | 161 unit and integration tests (plus 1 ignored live Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
+| Tests | 171 unit and integration tests (2 ignored: an explicit release-mode performance gate and a live TypeSafe Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
 | Deployment | Local source/CLI use; no hosted service or public production deployment is claimed |
 
 ### What this repository does not claim

@@ -36,6 +36,11 @@ Fixes for gaps found by the research-to-implementation audit.
   - Refusals name the detected variables (at most five) and point a person whose own shell was mistaken for an agent to "Agent sessions" in `docs/MEMORY.md`. More documented Claude Code settings do not count as markers, such as `CLAUDE_CODE_ENABLE_TELEMETRY`, `CLAUDE_CODE_USE_FOUNDRY`, and `CLAUDE_CODE_OAUTH_TOKEN`.
 
   `Trace::validate` also refuses a verified trace whose locator starts with `agent-session:`, on every write path. This is a guard, not authentication: a process that clears those variables is not detected, and `source` stays a caller claim. README, `docs/MEMORY.md`, and `SECURITY.md` now say so.
+- **Recall hits are attributable and explainable.** Each recall result now carries a top-level `trace_id` (duplicated from the nested trace) alongside its relevance `channels`. New `hikmah get <id>` fetches one trace, and new `hikmah why <id>` prints its full provenance chain: the trace with its provenance stamp, the supersession lineage that corrected or replaced it (newest first), and its unresolved conflicts.
+
+### Packaging
+- **The crate is publish-ready.** `cargo publish --dry-run -p hikmah-kernel` is clean and now runs as a CI gate; a new `release` workflow builds the `hikmah` binary for Linux, macOS, and Windows on `v*` tags and attaches the binaries to the GitHub Release. Real `cargo publish` stays a manual maintainer step: it needs a `CARGO_TOKEN` secret (a crates.io API token), which this repo does not invent.
+- **Python bridge.** New stdlib-only `python/hikmah/` package wrapping the JSON CLI: `Client` with `remember()`, `recall()`, `conflicts()`, `verify_ledger()`, and `get()`, raising a typed `HikmahError` on failures. The binary is located via `HIKMAH_BIN`, `PATH`, or an explicit path. Tests under `python/tests/` run with plain `python3` against the locally built binary.
 
 ### Decisions
 - **Missing evidence is no longer imputed as the average of the known criteria.** Each option now reports `score_interval: [lo, hi]`, with every unscored criterion at the scale minimum for `lo` and at the maximum for `hi`. This is interval arithmetic with no invented prior.

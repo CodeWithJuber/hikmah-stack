@@ -25,6 +25,10 @@ jobs:
         run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
       - name: Rust tests
         run: cargo test --workspace
+      - name: Crate stays publishable (dry run only; real publish needs CARGO_TOKEN)
+        run: cargo publish --dry-run -p hikmah-kernel
+      - name: README test count matches the tree
+        run: bash scripts/check-readme-test-count.sh
       - name: Validate Hikmah package
         run: cargo run -p hikmah-kernel -- validate --root .
       - name: Python Truth Gate fallback (golden cases shared with Rust)
@@ -47,6 +51,11 @@ jobs:
           toolchain: stable
       - name: Rust tests
         run: cargo test --workspace
+      - name: Crate stays publishable (dry run only; real publish needs CARGO_TOKEN)
+        run: cargo publish --dry-run -p hikmah-kernel
+      - name: README test count matches the tree
+        shell: bash
+        run: bash scripts/check-readme-test-count.sh
       - name: Validate Hikmah package
         run: cargo run -p hikmah-kernel -- validate --root .
       - name: Hook launcher falls back to Python and still blocks
