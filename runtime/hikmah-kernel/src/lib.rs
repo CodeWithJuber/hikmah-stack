@@ -20,6 +20,7 @@ pub mod secrets;
 pub mod threshold;
 pub mod trace;
 pub mod validate;
+pub mod why;
 
 pub use decision_port::{
     admit, ask, AdmittedAnswer, AdmittedDecision, DecisionEngine, DecisionRequest, NoEngine,
@@ -29,3 +30,4 @@ pub use error::{KernelError, Result};
 pub use ledger::MemoryStore;
 pub use recall::{RecallQuery, RecallResult};
 pub use trace::{PrivacyClass, Provenance, Trace, TraceKind, TraceStatus};
+pub use why::TraceLineage;

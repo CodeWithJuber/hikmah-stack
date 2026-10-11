@@ -18,7 +18,8 @@
 //!
 //! Each result carries its claim's unresolved `conflicts` (other active traces with the same
 //! normalized claim key and a different value) and its supersession links, so a correction or a
-//! competing claim is visible beside the claim it challenges.
+//! competing claim is visible beside the claim it challenges. Every result also carries a
+//! top-level `trace_id` (duplicated from the nested trace) for first-class attribution.
 use crate::claims::{claims_conflict, conflicting_ids};
 use crate::ledger::MemoryStore;
 use crate::policy::RecallWeights;
@@ -64,6 +65,9 @@ pub struct RecallChannels {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallResult {
+    /// First-class attribution: the recalled trace's id, duplicated from `trace.id`
+    /// so consumers don't have to dig into the nested trace.
+    pub trace_id: String,
     pub trace: Trace,
     pub score: f32,
     pub channels: RecallChannels,
@@ -255,6 +259,7 @@ fn score_trace(
     .clamp(0.0, 1.0);
 
     Some(RecallResult {
+        trace_id: trace.id.clone(),
         trace: trace.clone(),
         score,
         channels: RecallChannels {

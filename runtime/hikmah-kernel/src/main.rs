@@ -102,6 +102,19 @@ enum Command {
         #[arg(long)]
         include_superseded: bool,
     },
+    /// Fetch a single trace by id.
+    Get {
+        #[arg(long, default_value = DEFAULT_STORE)]
+        store: PathBuf,
+        id: String,
+    },
+    /// Print a trace's full provenance chain: the trace itself, the supersession
+    /// lineage that corrected or replaced it, and its unresolved conflicts.
+    Why {
+        #[arg(long, default_value = DEFAULT_STORE)]
+        store: PathBuf,
+        id: String,
+    },
     /// List unresolved conflicts: active traces whose claims share a key but disagree on the value.
     Conflicts {
         #[arg(long, default_value = DEFAULT_STORE)]
@@ -447,6 +460,20 @@ fn run() -> Result<()> {
                 .collect::<Result<_>>()?;
             recall.limit = limit as usize;
             print_json(&memory.recall(&recall))?;
+        }
+        Command::Get { store, id } => {
+            let memory = MemoryStore::open_existing(store, policy()?)?;
+            let entry = memory
+                .get(&id)
+                .ok_or_else(|| KernelError::NotFound(id.clone()))?;
+            print_json(&entry.trace)?;
+        }
+        Command::Why { store, id } => {
+            let memory = MemoryStore::open_existing(store, policy()?)?;
+            let chain = memory
+                .provenance_chain(&id)
+                .ok_or_else(|| KernelError::NotFound(id.clone()))?;
+            print_json(&chain)?;
         }
         Command::Conflicts { store } => {
             let memory = MemoryStore::open_existing(store, policy()?)?;
