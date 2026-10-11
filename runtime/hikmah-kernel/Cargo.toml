@@ -6,6 +6,8 @@ rust-version = "1.89"
 description = "Deterministic co-model runtime for Hikmah Stack"
 license = "MIT"
 repository = "https://github.com/CodeWithJuber/hikmah-stack"
+keywords = ["ai", "agents", "memory", "deterministic", "governance"]
+categories = ["command-line-utilities"]
 
 [lib]
 name = "hikmah_kernel"

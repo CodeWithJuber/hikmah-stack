@@ -1,0 +1,59 @@
+name: release
+
+# Tag a release (`git tag v3.2.0 && git push origin v3.2.0`) and this workflow
+# builds the `hikmah` binary for Linux, macOS, and Windows and attaches the
+# binaries to the GitHub Release.
+#
+# Publishing the `hikmah-kernel` crate to crates.io is a separate, manual step:
+# it needs a `CARGO_TOKEN` secret (a crates.io API token) and an explicit
+# `cargo publish -p hikmah-kernel` run by a maintainer. This workflow
+# deliberately only runs `cargo publish --dry-run` as a gate, so pushing a tag
+# can never publish the crate by accident.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package-gate:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to commit SHAs; the comment names the ref each SHA was taken from.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+      - name: Crate stays publishable (dry run only; real publish needs CARGO_TOKEN)
+        run: cargo publish --dry-run -p hikmah-kernel
+
+  build:
+    needs: package-gate
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Actions are pinned to commit SHAs; the comment names the ref each SHA was taken from.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: stable
+      - name: Build the release binary
+        run: cargo build --release -p hikmah-kernel
+      - name: Stage the binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [ -f target/release/hikmah.exe ]; then
+            cp target/release/hikmah.exe "dist/hikmah-${{ matrix.os }}.exe"
+          else
+            cp target/release/hikmah "dist/hikmah-${{ matrix.os }}"
+          fi
+      - name: Attach binaries to the GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          files: dist/*
