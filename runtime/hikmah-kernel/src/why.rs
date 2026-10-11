@@ -84,15 +84,61 @@ mod tests {
     use super::*;
     use crate::policy::KernelPolicy;
     use crate::trace::{Trace, TraceKind};
+    use std::ops::{Deref, DerefMut};
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    fn open_store() -> MemoryStore {
-        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("hikmah-why-test-{n}"));
-        std::fs::create_dir_all(&dir).expect("mkdir");
-        MemoryStore::open(dir.join("memory.jsonl"), KernelPolicy::default()).expect("open")
+    /// A scratch [`MemoryStore`] in a temp dir unique to this call: process id,
+    /// wall clock, and counter. Parallel tests in one run and leftover state
+    /// from previous runs can never share a store. The dir is removed when the
+    /// test ends, even on panic.
+    struct TestStore {
+        dir: PathBuf,
+        store: MemoryStore,
+    }
+
+    impl TestStore {
+        fn open() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+            let dir = std::env::temp_dir().join(format!(
+                "hikmah-why-test-{}-{nonce}-{n}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            let store =
+                MemoryStore::open(dir.join("memory.jsonl"), KernelPolicy::default()).expect("open");
+            TestStore { dir, store }
+        }
+    }
+
+    impl Drop for TestStore {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    impl Deref for TestStore {
+        type Target = MemoryStore;
+        fn deref(&self) -> &MemoryStore {
+            &self.store
+        }
+    }
+
+    impl DerefMut for TestStore {
+        fn deref_mut(&mut self) -> &mut MemoryStore {
+            &mut self.store
+        }
+    }
+
+    fn open_store() -> TestStore {
+        TestStore::open()
     }
 
     fn add(store: &mut MemoryStore, content: &str) -> Trace {
