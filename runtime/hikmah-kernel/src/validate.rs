@@ -193,10 +193,25 @@ pub fn validate_repo(root: impl AsRef<Path>) -> Result<Vec<String>> {
         if !skill_names.insert(name.clone()) {
             return Err(invalid(format!("duplicate skill name: {name}")));
         }
+        // A skill is doctrine plus the commands that execute it. Every skill must name at
+        // least one `hikmah` command it wires to, so the pack cannot drift back into
+        // instruction-only text with no executable path.
+        if !skill_wires_to_kernel(&text) {
+            return Err(invalid(format!(
+                "skill `{name}` names no `hikmah` command: add an \"Execute with the kernel\" section wiring it to the binary"
+            )));
+        }
         check_skill_links(&entry.path())?;
     }
     notes.push(format!("{} unique skills", skill_names.len()));
     Ok(notes)
+}
+
+/// A skill is doctrine plus the commands that execute it: its SKILL.md must name at least
+/// one `hikmah` command it wires to, so the pack cannot drift back into instruction-only
+/// text with no executable path.
+fn skill_wires_to_kernel(text: &str) -> bool {
+    text.contains("`hikmah")
 }
 
 /// Skills are installed one directory at a time, so a relative Markdown link must resolve to an
@@ -378,5 +393,18 @@ mod tests {
             vec!["x.md", "https://e.com"]
         );
         fs::remove_dir_all(&skill).unwrap();
+    }
+
+    #[test]
+    fn every_skill_must_wire_to_the_kernel() {
+        assert!(skill_wires_to_kernel(
+            "## Execute with the kernel\n\n- `hikmah recall --query ...`"
+        ));
+        assert!(skill_wires_to_kernel("run `hikmah verify-ledger` first"));
+        assert!(!skill_wires_to_kernel(
+            "# Pure doctrine\n\nTwelve rules for builders. No commands here."
+        ));
+        // A bare mention without backticks is prose, not a command reference.
+        assert!(!skill_wires_to_kernel("the hikmah binary does things"));
     }
 }

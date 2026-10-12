@@ -368,13 +368,33 @@ def call_jev(db, body, key, args):
     return {"error": status, "ms": (time.perf_counter()-start)*1000, "attempts": attempts}
 
 
-def run(args):
-    manifest, rows = load_data(args.data)
-    # Sampling is independent of gold labels and deterministic across resume.
+def select_rows(manifest, rows, seed, limit=0, pilot=False):
+    """Deterministic, label-independent per-dataset sample.
+
+    Full run: every row. ``limit``: the first ``limit`` rows of the seeded
+    shuffle per dataset. ``pilot``: a deterministic 5% sample per dataset —
+    the cheap run that decides whether the full run is worth its API/token
+    cost. Sampling never looks at gold labels and is stable across resumes.
+    """
+    import math
     selected = []
     for dataset in manifest["labels"]:
-        subset = sorted((r for r in rows if r["dataset"] == dataset), key=lambda r: sha((str(args.seed)+r["id"]).encode()))
-        selected.extend(subset[:args.limit] if args.limit else subset)
+        subset = sorted((r for r in rows if r["dataset"] == dataset), key=lambda r: sha((str(seed)+r["id"]).encode()))
+        if pilot:
+            take = max(1, math.ceil(len(subset) * 0.05))
+        elif limit:
+            take = limit
+        else:
+            take = len(subset)
+        selected.extend(subset[:take])
+    return selected
+
+
+def run(args):
+    manifest, rows = load_data(args.data)
+    pilot = getattr(args, "pilot", False)
+    limit = getattr(args, "limit", 0)
+    selected = select_rows(manifest, rows, args.seed, limit=limit, pilot=pilot)
     random.Random(args.seed).shuffle(selected)
     args.out.mkdir(parents=True, exist_ok=True)
     import fcntl
@@ -384,7 +404,7 @@ def run(args):
     except BlockingIOError:
         raise SystemExit("Another process is using this output directory") from None
     config = {"manifest": manifest, "mode": "live-paired" if args.live else "offline",
-              "model": args.model, "limit_per_dataset": args.limit, "seed": args.seed,
+              "model": args.model, "limit_per_dataset": limit, "pilot": pilot, "seed": args.seed,
               "runner_sha256": sha(Path(__file__).read_bytes()),
               "bridge_source_sha256": sha((ROOT / "runtime/hikmah-kernel/examples/real_bench_port.rs").read_bytes()),
               "binary_sha256": sha(args.binary.read_bytes()), "python": platform.python_version()}
@@ -486,6 +506,10 @@ def main():
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--model", default="jev-1.13.0")
     parser.add_argument("--limit", type=int, default=0, help="Per dataset; 0 means the complete selected splits")
+    parser.add_argument("--pilot", action="store_true",
+                        help="Cost discipline: run a deterministic 5%% sample per dataset first. "
+                             "Only scale up to the full run when the pilot shows signal. "
+                             "Cannot be combined with --limit.")
     parser.add_argument("--seed", type=int, default=20260926)
     parser.add_argument("--max-calls", type=int, default=20000, help="Cumulative HTTP attempts including retries and resumed runs")
     parser.add_argument("--rps", type=float, default=2, help="Sequential request rate ceiling; no parallel calls")
@@ -493,6 +517,8 @@ def main():
     args = parser.parse_args()
     if args.limit < 0 or args.max_calls < 1 or not 0 < args.rps <= 10 or not 1 <= args.timeout <= 120:
         parser.error("Invalid bound")
+    if args.pilot and args.limit:
+        parser.error("--pilot cannot be combined with --limit")
     if args.command == "prepare":
         prepare(args.data)
     else:

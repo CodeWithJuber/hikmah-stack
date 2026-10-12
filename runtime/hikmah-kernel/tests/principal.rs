@@ -83,6 +83,27 @@ fn a_person_s_shell_is_not_an_agent_session() {
 }
 
 #[test]
+fn a_person_can_declare_their_terminal() {
+    // An editor's integrated terminal can set agent markers on a person's behalf
+    // (Cursor sets CURSOR_* in its terminals). Exporting HIKMAH_AGENT_SESSION=0
+    // declares the terminal a person's, and detection reports no session.
+    assert_eq!(
+        env(&[("CLAUDECODE", "1"), ("HIKMAH_AGENT_SESSION", "0")]),
+        None
+    );
+    assert_eq!(env(&[("HIKMAH_AGENT_SESSION", "0")]), None);
+    // The value is trimmed; only the exact value "0" opts out.
+    assert_eq!(
+        env(&[("CODEX_SANDBOX", "1"), ("HIKMAH_AGENT_SESSION", " 0 ")]),
+        None
+    );
+    assert!(env(&[("CLAUDECODE", "1"), ("HIKMAH_AGENT_SESSION", "1")]).is_some());
+    assert!(env(&[("CLAUDECODE", "1"), ("HIKMAH_AGENT_SESSION", "false")]).is_some());
+    // An empty declaration is not a declaration.
+    assert!(env(&[("CLAUDECODE", "1"), ("HIKMAH_AGENT_SESSION", "")]).is_some());
+}
+
+#[test]
 fn session_ids_are_sanitized_and_bounded() {
     let long = "a".repeat(200);
     let session = env(&[("CLAUDECODE", "1"), ("CLAUDE_CODE_SESSION_ID", &long)]).unwrap();
@@ -229,6 +250,53 @@ fn the_cli_stamps_agent_writes_and_refuses_their_verified_flag() {
     let human: Value = serde_json::from_slice(&human.stdout).unwrap();
     assert_eq!(human["trace"]["provenance"]["verified"], true);
     assert_eq!(human["trace"]["provenance"]["locator"], Value::Null);
+}
+
+#[test]
+fn a_declared_person_terminal_is_not_stamped_or_refused() {
+    let path = temp_store("person-declared");
+    let store = path.to_str().unwrap();
+    // An editor's integrated terminal sets the marker on a person's behalf;
+    // the person declares the terminal theirs.
+    let person = [
+        ("CLAUDECODE", "1"),
+        ("CLAUDE_CODE_SESSION_ID", "ide-7"),
+        ("HIKMAH_AGENT_SESSION", "0"),
+    ];
+    let args = |extra: &[&str], env: &[(&str, &str)]| {
+        let mut v = vec![
+            "remember",
+            "--store",
+            store,
+            "--kind",
+            "belief",
+            "--content",
+            "Staging deploys run at 02:00",
+            "--source",
+            "human:juber",
+        ];
+        v.extend_from_slice(extra);
+        hikmah(&v, env)
+    };
+
+    let verified = args(&["--verified"], &person);
+    assert!(
+        verified.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verified.stderr)
+    );
+    let verified: Value = serde_json::from_slice(&verified.stdout).unwrap();
+    assert_eq!(verified["trace"]["provenance"]["verified"], true);
+    assert_eq!(
+        verified["trace"]["provenance"]["locator"],
+        Value::Null,
+        "a declared person terminal is not stamped"
+    );
+
+    // The declaration does not hide the session when it is absent.
+    let agent = [("CLAUDECODE", "1")];
+    let refused = args(&["--verified"], &agent);
+    assert!(!refused.status.success());
 }
 
 #[test]

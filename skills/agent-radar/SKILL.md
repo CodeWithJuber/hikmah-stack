@@ -192,3 +192,9 @@ Treat persistent memory as a new attack/failure surface:
 - **Privacy retention:** sensitive material persists because cognitive convenience outranked deletion policy.
 
 When one appears, use the Memory Integrity lens and TraceWeave playbook before adding more context or a larger model.
+
+## Execute with the kernel
+
+- The Truth Gate (`hooks/truth_gate.sh` as the host's Stop hook) screens "done" claims against the transcript; engine mode is a measured screen (about one false completion in six, deliberately not a fact-checker).
+- `hikmah recall --query "<agent claim>"` — check the claim against recorded memory before trusting it.
+- `hikmah verify-ledger` — confirm the record being cited has not been altered.

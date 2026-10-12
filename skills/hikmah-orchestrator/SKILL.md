@@ -46,3 +46,8 @@ Use this skill when one lens is not enough. Do not stack frameworks for decorati
 3. Two to four relevant principles or controls.
 4. Decision or recommendation with tradeoffs.
 5. Three to five immediate actions.
+
+## Execute with the kernel
+
+- `hikmah validate --root <repo>` — checks that this skill pack, the hooks, and the plugin manifests are consistent (this repo's own CI runs it).
+- When persistence matters, route state through the kernel's commands (`remember` / `recall` / `decide` / `verify-ledger`) rather than prose notes.

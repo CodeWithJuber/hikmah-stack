@@ -14,6 +14,7 @@ use hikmah_kernel::recall::RecallQuery;
 use hikmah_kernel::trace::{parse_deadline, OutcomeRecord, PrivacyClass, Trace, TraceKind};
 use hikmah_kernel::validate::validate_repo;
 use hikmah_kernel::{KernelError, MemoryStore, Result};
+use serde::Deserialize;
 use serde_json::json;
 use std::fs;
 use std::io;
@@ -84,6 +85,17 @@ enum Command {
         /// terminal.
         #[arg(long)]
         verified: bool,
+    },
+    /// Append many traces in one process: one JSON object per line, each with the same fields
+    /// as `remember`'s flags (`kind` and `content` required; `tags` is an array; unknown fields
+    /// are errors). Every record is validated before the store is opened, so a refused batch
+    /// writes nothing.
+    RememberBatch {
+        #[arg(long, default_value = DEFAULT_STORE)]
+        store: PathBuf,
+        /// JSON-lines file to read (`-` reads stdin).
+        #[arg(long)]
+        batch_file: PathBuf,
     },
     /// Contextual recall.
     Recall {
@@ -304,6 +316,94 @@ enum Command {
     },
 }
 
+/// One record of a `remember-batch` file: the same fields as `remember`'s flags.
+/// Unknown fields are errors, so a typo fails loudly instead of being ignored.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RememberRecord {
+    kind: String,
+    content: String,
+    #[serde(default = "default_source")]
+    source: String,
+    #[serde(default)]
+    locator: Option<String>,
+    #[serde(default = "default_half")]
+    authority: f32,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default = "default_half")]
+    salience: f32,
+    #[serde(default = "default_half")]
+    confidence: f32,
+    #[serde(default = "default_privacy")]
+    privacy: String,
+    #[serde(default)]
+    claim_key: Option<String>,
+    #[serde(default)]
+    claim_value: Option<String>,
+    #[serde(default)]
+    supersedes: Option<String>,
+    #[serde(default)]
+    deadline: Option<String>,
+    #[serde(default)]
+    verified: bool,
+}
+
+fn default_source() -> String {
+    "unknown".to_string()
+}
+
+fn default_half() -> f32 {
+    0.5
+}
+
+fn default_privacy() -> String {
+    "private".to_string()
+}
+
+/// Build the trace `remember` would write for this record, without stamping it.
+/// Shared by `remember` and `remember-batch` so both take exactly the same code path.
+fn build_remember_trace(record: &RememberRecord) -> Result<Trace> {
+    let mut trace = Trace::new(
+        TraceKind::from_str(&record.kind)?,
+        record.content.clone(),
+        record.source.clone(),
+    );
+    if trace.kind == TraceKind::Prediction {
+        return Err(KernelError::Invalid(
+            "predictions are recorded with `hikmah predict` (people and agents) or `hikmah ask --record` / `hikmah decide --record` (engines)".into(),
+        ));
+    }
+    trace.tags = record.tags.clone();
+    trace.salience = record.salience;
+    trace.confidence = record.confidence;
+    trace.privacy = PrivacyClass::from_str(&record.privacy)?;
+    trace.claim_key = record.claim_key.clone();
+    trace.claim_value = record.claim_value.clone();
+    trace.supersedes = record.supersedes.clone();
+    trace.provenance.verified = record.verified;
+    trace.provenance.authority = record.authority;
+    trace.provenance.locator = record.locator.clone();
+    if let Some(deadline) = &record.deadline {
+        trace.deadline_ms = Some(parse_deadline(deadline, trace.created_at_ms)?);
+    }
+    Ok(trace)
+}
+
+/// Read a `remember-batch` input: a file path, or `-` for stdin.
+fn read_batch_input(path: &std::path::Path) -> Result<String> {
+    if path.as_os_str() == "-" {
+        let mut input = String::new();
+        io::Read::read_to_string(&mut io::stdin(), &mut input)
+            .map_err(|e| KernelError::Invalid(format!("cannot read batch from stdin: {e}")))?;
+        Ok(input)
+    } else {
+        fs::read_to_string(path).map_err(|e| {
+            KernelError::Invalid(format!("cannot read batch file {}: {e}", path.display()))
+        })
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("hikmah: {error}");
@@ -415,25 +515,23 @@ fn run() -> Result<()> {
             deadline,
             verified,
         } => {
-            let mut trace = Trace::new(TraceKind::from_str(&kind)?, content, source);
-            if trace.kind == TraceKind::Prediction {
-                return Err(KernelError::Invalid(
-                    "predictions are recorded with `hikmah predict` (people and agents) or `hikmah ask --record` / `hikmah decide --record` (engines)".into(),
-                ));
-            }
-            trace.tags = tags;
-            trace.salience = salience;
-            trace.confidence = confidence;
-            trace.privacy = PrivacyClass::from_str(&privacy)?;
-            trace.claim_key = claim_key;
-            trace.claim_value = claim_value;
-            trace.supersedes = supersedes;
-            trace.provenance.verified = verified;
-            trace.provenance.authority = authority;
-            trace.provenance.locator = locator;
-            if let Some(deadline) = deadline {
-                trace.deadline_ms = Some(parse_deadline(&deadline, trace.created_at_ms)?);
-            }
+            let record = RememberRecord {
+                kind,
+                content,
+                source,
+                locator,
+                authority,
+                tags,
+                salience,
+                confidence,
+                privacy,
+                claim_key,
+                claim_value,
+                supersedes,
+                deadline,
+                verified,
+            };
+            let mut trace = build_remember_trace(&record)?;
             // Before the store is opened, so a refused write creates nothing.
             if let Some(agent) = principal::detect_from_env() {
                 agent.stamp(&mut trace)?;
@@ -441,6 +539,39 @@ fn run() -> Result<()> {
             let mut memory = MemoryStore::open(store, policy()?)?;
             let (trace, conflicts) = memory.remember(trace)?;
             print_json(&json!({"trace": trace, "conflicts": conflicts}))?;
+        }
+        Command::RememberBatch { store, batch_file } => {
+            let input = read_batch_input(&batch_file)?;
+            let mut records = Vec::new();
+            for (index, line) in input.lines().enumerate() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let record: RememberRecord = serde_json::from_str(line)
+                    .map_err(|e| KernelError::Invalid(format!("batch line {}: {e}", index + 1)))?;
+                records.push((index + 1, record));
+            }
+            // Validate everything before the store is opened, so a refused batch
+            // writes nothing. Same code path as `remember`, record by record.
+            let agent = principal::detect_from_env();
+            let mut traces = Vec::with_capacity(records.len());
+            for (line, record) in &records {
+                let mut trace = build_remember_trace(record)
+                    .map_err(|e| KernelError::Invalid(format!("batch line {line}: {e}")))?;
+                if let Some(agent) = &agent {
+                    agent
+                        .stamp(&mut trace)
+                        .map_err(|e| KernelError::Invalid(format!("batch line {line}: {e}")))?;
+                }
+                traces.push(trace);
+            }
+            let mut memory = MemoryStore::open(store, policy()?)?;
+            let mut written = Vec::with_capacity(traces.len());
+            for trace in traces {
+                let (trace, conflicts) = memory.remember(trace)?;
+                written.push(json!({"trace": trace, "conflicts": conflicts}));
+            }
+            print_json(&json!({"written": written}))?;
         }
         Command::Recall {
             store,
