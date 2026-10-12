@@ -41,6 +41,41 @@ def main():
                 failures.append(f"invalid UTF-8 message should still be judged: {out}")
         elif out != {}:
             failures.append(f"expected allow for {raw!r}, got {out}")
+
+    # Structural guard (regression: infinite Stop-hook loop, 2026-10-12).
+    # A Stop hook of type "prompt" is an LLM judge: it cannot reliably honor the
+    # stop_hook_active loop-guard, so a "block" verdict can repeat forever and the
+    # agent never stops. Only deterministic command hooks are allowed on Stop.
+    # (codex.json already follows this rule; hooks.json must too.)
+    for name in ("hooks.json", "codex.json"):
+        cfg = json.loads((HERE / name).read_text(encoding="utf-8"))
+        for group in cfg.get("hooks", {}).get("Stop", []):
+            for h in group.get("hooks", []):
+                if h.get("type") != "command":
+                    failures.append(
+                        f"{name}: Stop hook must be type=command (deterministic), "
+                        f"found type={h.get('type')!r} — LLM prompt hooks can loop forever"
+                    )
+                if int(h.get("timeout", 0)) > 30:
+                    failures.append(
+                        f"{name}: Stop hook timeout {h.get('timeout')}s > 30s — "
+                        f"a slow Stop gate feels like a hang"
+                    )
+
+    # Termination proof: a blocking message must block at most once. The second
+    # Stop event carries stop_hook_active=true and MUST allow, otherwise the
+    # agent loops forever.
+    blocking = "Done! The feature is complete. TODO: still need to fix the edge case."
+    first = run_hook(json.dumps(
+        {"last_assistant_message": blocking, "stop_hook_active": False}).encode("utf-8"))
+    if first.get("decision") != "block":
+        failures.append(f"expected block on first stop, got {first}")
+    for active in (True, 1, "true", "1"):
+        second = run_hook(json.dumps(
+            {"last_assistant_message": blocking, "stop_hook_active": active}).encode("utf-8"))
+        if second != {}:
+            failures.append(
+                f"INFINITE-LOOP RISK: stop_hook_active={active!r} must allow, got {second}")
     if failures:
         print("\n".join(failures))
         return 1
