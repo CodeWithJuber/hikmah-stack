@@ -122,6 +122,32 @@ class Client:
             args.append("--verified")
         return self._json(*args)
 
+    def remember_batch(self, records: list) -> dict:
+        """Append many traces in one process. ``records`` is a list of dicts with
+        the same fields as ``remember`` (``kind`` and ``content`` required).
+        Returns ``{"written": [{"conflicts": [...], "trace": {...}}, ...]}``.
+        Every record is validated before the store opens, so a refused batch
+        writes nothing and raises ``HikmahError``."""
+        payload = "\n".join(json.dumps(r) for r in records)
+        cmd = [self.binary]
+        if self.policy:
+            cmd += ["--policy", self.policy]
+        cmd += ["remember-batch", *self._store_args(), "--batch-file", "-"]
+        try:
+            proc = subprocess.run(cmd, input=payload, capture_output=True,
+                                  text=True, timeout=120)
+        except FileNotFoundError as exc:
+            raise HikmahError(f"hikmah binary not executable at {self.binary!r}: {exc}")
+        except subprocess.TimeoutExpired:
+            raise HikmahError(f"hikmah timed out after 120s: {' '.join(cmd)}")
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip()
+            raise HikmahError(f"hikmah exited {proc.returncode}: {detail[-2000:]}")
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise HikmahError(f"hikmah returned non-JSON output: {exc}\n{proc.stdout[:2000]}")
+
     def recall(
         self,
         query: str,

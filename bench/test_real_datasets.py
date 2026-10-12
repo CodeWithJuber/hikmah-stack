@@ -130,5 +130,42 @@ class KernelTests(unittest.TestCase):
             self.assertNotIn("test-placeholder", (args.out / "results.jsonl").read_text())
 
 
+class PilotTests(unittest.TestCase):
+    def rows(self, dataset, n):
+        return [{"id": f"{dataset}/{i:06d}", "dataset": dataset, "gold": "ham",
+                 "state": f"row {i}"} for i in range(n)]
+
+    def test_pilot_takes_five_percent_per_dataset(self):
+        manifest = {"labels": {"a": ["ham"], "b": ["ham"]}}
+        rows = self.rows("a", 100) + self.rows("b", 40)
+        selected = bench.select_rows(manifest, rows, seed=1, pilot=True)
+        by_dataset = {}
+        for r in selected:
+            by_dataset.setdefault(r["dataset"], []).append(r["id"])
+        self.assertEqual(len(by_dataset["a"]), 5)
+        self.assertEqual(len(by_dataset["b"]), 2)
+
+    def test_pilot_is_deterministic_and_label_independent(self):
+        manifest = {"labels": {"a": ["ham", "spam"]}}
+        rows = self.rows("a", 100)
+        first = [r["id"] for r in bench.select_rows(manifest, rows, seed=7, pilot=True)]
+        second = [r["id"] for r in bench.select_rows(manifest, rows, seed=7, pilot=True)]
+        self.assertEqual(first, second)
+        relabeled = [dict(r, gold="spam") for r in rows]
+        third = [r["id"] for r in bench.select_rows(manifest, relabeled, seed=7, pilot=True)]
+        self.assertEqual(first, third)
+
+    def test_pilot_never_takes_zero(self):
+        manifest = {"labels": {"a": ["ham"]}}
+        selected = bench.select_rows(manifest, self.rows("a", 3), seed=1, pilot=True)
+        self.assertEqual(len(selected), 1)
+
+    def test_limit_and_full_unchanged(self):
+        manifest = {"labels": {"a": ["ham"]}}
+        rows = self.rows("a", 50)
+        self.assertEqual(len(bench.select_rows(manifest, rows, seed=1)), 50)
+        self.assertEqual(len(bench.select_rows(manifest, rows, seed=1, limit=10)), 10)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -118,6 +118,26 @@ class ClientTest(unittest.TestCase):
         with self.assertRaises(HikmahError):
             client.recall("anything")
 
+    def test_remember_batch_writes_all_records_in_one_call(self):
+        result = self.client.remember_batch([
+            {"kind": "observation", "content": "batch fact one", "tags": ["b1"]},
+            {"kind": "belief", "content": "batch fact two",
+             "claim_key": "py.batch", "claim_value": "yes"},
+        ])
+        written = result["written"]
+        self.assertEqual(len(written), 2)
+        self.assertEqual(written[0]["trace"]["content"], "batch fact one")
+        self.assertEqual(written[1]["trace"]["claim_key"], "py.batch")
+
+    def test_remember_batch_refuses_invalid_record_atomically(self):
+        with self.assertRaises(HikmahError) as ctx:
+            self.client.remember_batch([
+                {"kind": "observation", "content": "fine"},
+                {"kind": "not-a-kind", "content": "bad"},
+            ])
+        self.assertIn("batch line 2", str(ctx.exception))
+        self.assertEqual(self.client.recall("fine"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

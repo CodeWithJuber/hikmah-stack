@@ -14,7 +14,8 @@
 //! This is a guard against self-verification by default, not authentication. A process that clears
 //! these variables is not detected. A variable a person's own shell or IDE terminal sets counts as
 //! a marker (except the documented configuration settings in [`USER_CONFIGURATION`]); the refusal
-//! names it so that person can run the command from a shell without it. Authenticated attestation,
+//! names it so that person can either run the command from a shell without it or declare the
+//! terminal theirs with [`PERSON_TERMINAL_DECLARATION`]. Authenticated attestation,
 //! meaning a signature with a key the agent cannot read, is not implemented.
 use crate::error::{KernelError, Result};
 use crate::trace::Trace;
@@ -85,6 +86,20 @@ pub const USER_CONFIGURATION: &[&str] = &[
     "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
     "CLAUDE_CODE_GIT_BASH_PATH",
 ];
+
+/// Explicit person-terminal declaration.
+///
+/// A person whose own shell is mistaken for an AI agent session — an editor's integrated terminal
+/// that sets `CURSOR_*` variables, a shell profile that exports a marker — can declare the
+/// terminal theirs by exporting `HIKMAH_AGENT_SESSION=0`. [`detect`] then reports no session:
+/// writes are not stamped and `--verified` / `--accept-tail` / `--reset-head` are not refused.
+/// Any other value is ignored.
+///
+/// This is a declaration, not authentication: it carries exactly the same trust as clearing the
+/// variables, and the kernel's refusal messages deliberately do not name it. An agent that
+/// follows a refusal must stop and ask a person; a person finds this in `docs/MEMORY.md`
+/// ("Agent sessions"). An agent must not set it.
+pub const PERSON_TERMINAL_DECLARATION: &str = "HIKMAH_AGENT_SESSION";
 
 /// Where a person whose own shell is mistaken for an agent session finds how to proceed.
 const FALSE_POSITIVE_HELP: &str = "\"Agent sessions\" in docs/MEMORY.md";
@@ -198,6 +213,13 @@ where
         .filter(|(_, value)| !value.as_ref().trim().is_empty())
         .map(|(name, value)| (name.as_ref().to_string(), value.as_ref().to_string()))
         .collect();
+    // A person's explicit declaration wins over every marker. See [`PERSON_TERMINAL_DECLARATION`].
+    if vars
+        .get(PERSON_TERMINAL_DECLARATION)
+        .is_some_and(|value| value.trim() == "0")
+    {
+        return None;
+    }
     let markers: Vec<String> = vars
         .keys()
         .filter(|name| is_agent_marker(name))

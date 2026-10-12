@@ -119,3 +119,10 @@ Before a consequential decision:
 7. write the decision and later outcome back as separate traces.
 
 Use `hikmah decide` for a deterministic weighted comparison when a structured frame is available.
+
+## Execute with the kernel
+
+- `hikmah decide --criteria ... --options ...` — deterministic weighted comparison: hard blocks, unknown criteria as score intervals, lower-bound ranking, reversibility preference.
+- `hikmah deliberate` — independent challenge lanes; risk and human-impact lanes veto (never averaged away).
+- `hikmah ask` — typed decision port (choice / score / noul) with all-or-nothing admission.
+- `hikmah predict` / `hikmah outcome` / `hikmah calibration` — record forecasts, write back outcomes, keep score (Brier + ECE; a family counts as calibrated only with ≥50 outcomes, a passing Spiegelhalter Z, and a Brier that beats the base rate).

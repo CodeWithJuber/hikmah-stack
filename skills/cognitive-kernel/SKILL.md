@@ -89,3 +89,16 @@ Lenses:
 - `lenses/memory-integrity.md`
 - `lenses/model-independence.md`
 - `lenses/human-memory-inspiration.md`
+
+## Execute with the kernel
+
+This skill is doctrine; the `hikmah` binary is the mechanism. When the host
+has it installed:
+
+- `hikmah init` — create the ledger-backed store (`.hikmah/memory.jsonl`).
+- `hikmah remember --kind <observation|belief|commitment|...> --content ... --source ...` — encode a typed trace with provenance.
+- `hikmah remember-batch --batch-file records.jsonl` — encode many traces in one process (one JSON object per line).
+- `hikmah recall --query ...` — relevance-gated recall; every hit carries a `trace_id` and its relevance channels.
+- `hikmah get <trace-id>` / `hikmah why <trace-id>` — fetch a trace / print its full provenance chain.
+- `hikmah conflicts` — list open contradictions (detection only; the kernel never picks a winner).
+- `hikmah verify-ledger` — prove the chain is intact.

@@ -133,3 +133,10 @@ Shipping is not the end of cognition. Before calling work complete:
 4. write the observed outcome, not merely “done,” into durable memory when memory is enabled;
 5. fulfill or supersede the corresponding commitment trace;
 6. if failure occurred, route it through `playbooks/error-to-learning.md` so the next agent inherits the correction.
+
+## Execute with the kernel
+
+- `hikmah verify-ledger` — prove the memory chain is intact before a release.
+- `hikmah conflicts` — surface open contradictions; nothing ships with an unacknowledged conflict.
+- `hikmah recall --query "<claim>"` — check what was actually recorded before asserting it.
+- The Truth Gate (`hooks/truth_gate.sh`, wired as the host's Stop hook) screens completion claims at stop time; `hooks/truth_gate.py` is the stdlib fallback.

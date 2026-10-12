@@ -164,3 +164,9 @@ Human judgment is not only what you think now; it is what you remember, forget, 
 - **Forget access, not accountability:** reduce attention to stale noise while keeping consequential history auditable under the retention policy.
 
 For the executable memory contract, use the `cognitive-kernel` skill when it is installed. When the full Hikmah Stack repository is available, its `docs/MEMORY.md` has the detailed design; this protocol stands on its own without either.
+
+## Execute with the kernel
+
+- `hikmah remember --kind commitment --content ... --deadline +48h` — prospective commitments surface automatically when overdue, no recall query needed.
+- `hikmah commitments --within-hours 168` / `hikmah fulfill --id <trace-id>` — list open commitments and close them.
+- `hikmah consolidate` — evidence-preserving consolidation proposals (never auto-promotion; model output never counts as support).

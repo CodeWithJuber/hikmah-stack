@@ -63,3 +63,19 @@ jobs:
         run: |
           out="$(printf '{"last_assistant_message":"Done. TODO: tests"}' | CLAUDE_PLUGIN_ROOT="$PWD" sh hooks/truth_gate.sh)"
           echo "$out" | python -c 'import json,sys; assert json.load(sys.stdin)["decision"] == "block"'
+
+  # The crate declares `rust-version = "1.89"`: this job keeps that claim honest.
+  # It checks the locked dependency tree compiles on 1.89, so MSRV cannot
+  # silently drift ahead of the manifest again.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to commit SHAs; the comment names the ref each SHA was taken from.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: 1.89
+      - name: MSRV check (default features)
+        run: cargo check --locked -p hikmah-kernel
+      - name: MSRV check (no network code)
+        run: cargo check --locked -p hikmah-kernel --no-default-features

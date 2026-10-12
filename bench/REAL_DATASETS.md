@@ -81,6 +81,21 @@ cause that one request to repeat. All API attempts, including retries, count tow
 the cumulative 20,000 cap. Authentication failure or five consecutive service errors
 stop the run. Error rows remain in the results and are not silently retried on resume.
 
+### Pilot first (cost discipline)
+
+A full live run makes ~17,000 paid API calls. Never start one cold: run the
+deterministic 5%-per-dataset pilot first, check the signal, then scale up.
+
+```bash
+bash bench/run_real.sh --pilot --out .benchmark-results/real-pilot-v1
+```
+
+`--pilot` takes a 5% sample of each dataset's selected split (at least 1 row),
+deterministic in the seed and independent of gold labels, and records
+`"pilot": true` in the run config. The pilot and the full run refuse resume
+into each other's output directories — use a new `--out` for the full run.
+`--pilot` cannot be combined with `--limit`.
+
 For 20 examples per dataset in a separate output directory:
 
 ```bash
