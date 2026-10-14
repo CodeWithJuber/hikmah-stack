@@ -29,37 +29,36 @@ Every claim above is backed by executable evidence in the table below, and the [
 
 ## Try it in 5 minutes
 
-One toolchain, no services, no API keys, everything local. Five commands tell the kernel's whole story: write a memory, read it back, watch two sources disagree, see the conflict listed, prove the chain is intact.
+One install, no services, no API keys, everything local. Five commands tell the kernel's whole story: write a memory, read it back, watch two sources disagree, see the conflict listed, prove the chain is intact.
 
 ```bash
-git clone https://github.com/CodeWithJuber/hikmah-stack.git
-cd hikmah-stack
+cargo install hikmah-kernel
 
 # 1. Write a memory your agent can't quietly rewrite
-cargo run -p hikmah-kernel -- init
-cargo run -p hikmah-kernel -- remember --kind observation \
+hikmah init
+hikmah remember --kind observation \
   --content "Deploys after 18:00 fail: the database lock times out" \
   --source cli --tag deploy --confidence 0.9
 
 # 2. Read it back — recall only returns memories that match your query
-cargo run -p hikmah-kernel -- recall --query "why do evening deploys fail"
+hikmah recall --query "why do evening deploys fail"
 
 # 3. Two sources disagree about the database port. Both are kept.
-cargo run -p hikmah-kernel -- remember --kind belief \
+hikmah remember --kind belief \
   --claim-key "db.primary.port" --claim-value "5432" \
   --content "Primary database listens on 5432" --source runbook
-cargo run -p hikmah-kernel -- remember --kind belief \
+hikmah remember --kind belief \
   --claim-key "db.primary.port" --claim-value "5433" \
   --content "Primary database moved to 5433" --source migration-notes
 
 # 4. The contradiction is listed, not hidden
-cargo run -p hikmah-kernel -- conflicts
+hikmah conflicts
 
 # 5. The chain proves nothing was edited, reordered, or injected
-cargo run -p hikmah-kernel -- verify-ledger
+hikmah verify-ledger
 ```
 
-First build takes a few minutes (Rust compiles the kernel and its dependencies); the demo itself runs in seconds.
+The demo itself runs in seconds. Prefer building from source? Clone the repo and use `cargo run -p hikmah-kernel -- <command>` instead of `hikmah` — first build takes a few minutes while Rust compiles the kernel and its dependencies.
 
 **Liked what you saw?**
 - ⭐ [Star the repo](https://github.com/CodeWithJuber/hikmah-stack) — it tells GitHub this kind of infrastructure matters.
