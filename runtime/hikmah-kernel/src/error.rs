@@ -12,6 +12,9 @@ pub enum KernelError {
     Invalid(String),
     #[error("trace not found: {0}")]
     NotFound(String),
+    /// A read-only command named a memory store that does not exist.
+    #[error("memory store not found: {} (run `hikmah init` first)", .0.display())]
+    StoreMissing(std::path::PathBuf),
     #[error("decision engine error: {0}")]
     Engine(String),
 }

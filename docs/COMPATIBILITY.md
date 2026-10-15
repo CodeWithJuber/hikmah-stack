@@ -14,7 +14,7 @@ Current reference:
 
 ## Claude Code
 
-The repository keeps a Claude Code manifest, marketplace metadata, a read-only orchestrator subagent (which preloads all six skills), and two Stop hooks: the deterministic Truth Gate command hook (`hooks/truth_gate.sh`) and a prompt-based completion review. The command hook needs an installed `hikmah` binary (`scripts/install-kernel.sh`, or `bin/hikmah` inside the plugin) or `python3`; without either it allows.
+The repository keeps a Claude Code manifest, marketplace metadata, a read-only orchestrator subagent (which preloads all six skills), and one Stop hook: the deterministic Truth Gate command hook (`hooks/truth_gate.sh`). It reads only the final assistant message. The plugin ships no binary: the hook uses a `hikmah` binary on PATH (`scripts/install-kernel.sh`) if there is one, and otherwise the rules-only `hooks/truth_gate.py` with `python3`; without either it allows. Engine mode needs the Rust binary plus `TYPESAFE_API_KEY` and `HIKMAH_HOOK_ENGINE=jev`. The launcher also tries `bin/hikmah` inside the plugin directory, but nothing installs one there.
 
 ## Kimi
 

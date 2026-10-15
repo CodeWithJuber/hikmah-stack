@@ -6,7 +6,8 @@
 # final fallback is an allow ({}).
 #
 # Security: this launcher never compiles code. It only runs an installed `hikmah` binary (plugin
-# `bin/` first, then PATH) or the Python fallback. Building from source at Stop time would run
+# `bin/` first, then PATH) or the Python fallback. The plugin ships no `bin/` directory; a binary
+# is used there only if someone places one. Building from source at Stop time would run
 # cargo/rustup configuration from the user's project directory, which that project controls.
 set -u
 

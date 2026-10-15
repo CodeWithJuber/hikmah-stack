@@ -290,10 +290,7 @@ impl MemoryStore {
     pub fn open_existing(path: impl AsRef<Path>, policy: KernelPolicy) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if !path.is_file() {
-            return Err(KernelError::NotFound(format!(
-                "memory store {} (run `hikmah init` first)",
-                path.display()
-            )));
+            return Err(KernelError::StoreMissing(path));
         }
         Self::load(path, policy)
     }

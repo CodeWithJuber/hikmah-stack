@@ -49,5 +49,7 @@ Use this skill when one lens is not enough. Do not stack frameworks for decorati
 
 ## Execute with the kernel
 
+Requires the `hikmah` binary on PATH; the plugin does not install it. Until the next release reaches crates.io, install it from source: `cargo install --git https://github.com/CodeWithJuber/hikmah-stack hikmah-kernel --locked`. If `command -v hikmah` fails, say so and skip these commands instead of improvising.
+
 - `hikmah validate --root <repo>` — checks that this skill pack, the hooks, and the plugin manifests are consistent (this repo's own CI runs it).
 - When persistence matters, route state through the kernel's commands (`remember` / `recall` / `decide` / `verify-ledger`) rather than prose notes.

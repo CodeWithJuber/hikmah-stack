@@ -13,7 +13,7 @@ Preserve Hikmah Stack's **first-principles cognitive architecture**.
 
 Before declaring a change complete:
 - run `cargo fmt --check`;
-- run `cargo clippy --workspace --all-targets`;
+- run `cargo clippy --workspace --all-targets -- -D warnings` and `cargo clippy --workspace --all-targets --no-default-features -- -D warnings`;
 - run `cargo test --workspace`;
 - run `cargo run -p hikmah-kernel -- validate --root .`;
 - inspect changed files and factual compatibility claims;

@@ -235,7 +235,10 @@ fn edited_payload_bytes_and_injected_fields_are_rejected() {
 #[test]
 fn read_only_open_does_not_create_missing_stores() {
     let path = temp_store("missing").with_file_name("typo.jsonl");
-    assert!(MemoryStore::open_existing(&path, KernelPolicy::default()).is_err());
+    assert!(matches!(
+        MemoryStore::open_existing(&path, KernelPolicy::default()),
+        Err(KernelError::StoreMissing(missing)) if missing == path
+    ));
     assert!(!path.exists());
 }
 

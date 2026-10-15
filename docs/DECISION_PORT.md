@@ -79,7 +79,8 @@ HIKMAH_HOOK_ENGINE=jev TYPESAFE_API_KEY=... hikmah hook < stop-event.json
 # Opt in to letting a confident engine answer (p < 0.1 here) lift a rules block. Off by default.
 HIKMAH_HOOK_ENGINE=jev HIKMAH_HOOK_ENGINE_LIFT=0.1 TYPESAFE_API_KEY=... hikmah hook < stop-event.json
 
-# Same code path, explained: rules verdict, engine probability, threshold, and which path decided.
+# Same code path, explained: rules verdict and what the rules matched (`rules_match`: rule, term,
+# character offset in the normalized message), engine probability, threshold, and which path decided.
 # stdin is parsed exactly like the hook's (lone surrogates, trailing data, invalid UTF-8); when the
 # hook would allow without judging (for example stop_hook_active), `skipped` says why.
 # --batch reads {"id", "last_assistant_message"} JSON lines and writes one verdict per line.

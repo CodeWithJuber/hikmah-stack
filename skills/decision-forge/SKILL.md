@@ -122,7 +122,26 @@ Use `hikmah decide` for a deterministic weighted comparison when a structured fr
 
 ## Execute with the kernel
 
-- `hikmah decide --criteria ... --options ...` — deterministic weighted comparison: hard blocks, unknown criteria as score intervals, lower-bound ranking, reversibility preference.
+Requires the `hikmah` binary on PATH; the plugin does not install it. Until the next release reaches crates.io, install it from source: `cargo install --git https://github.com/CodeWithJuber/hikmah-stack hikmah-kernel --locked`. If `command -v hikmah` fails, say so and skip these commands instead of improvising.
+
+- `hikmah decide --frame frame.json [--engine jev --record]` — deterministic weighted comparison: hard blocks, unknown criteria as score intervals, lower-bound ranking, reversibility preference. `--engine jev` (needs `TYPESAFE_API_KEY`) estimates missing criteria for options that have a `description`; the estimates rank options but never count as evidence, and `--record` stores them as predictions. A minimal `frame.json` (scores in `[0, 1]`; a criterion an option does not score stays unknown, never zero):
+
+  ```json
+  {
+    "question": "Which deployment path should we use?",
+    "criteria": [
+      {"id": "safety", "weight": 0.6, "description": "Operational safety"},
+      {"id": "speed", "weight": 0.4, "description": "Time to value"}
+    ],
+    "options": [
+      {"name": "canary", "scores": {"safety": 0.9, "speed": 0.6},
+       "evidence_confidence": 0.8, "reversible": true},
+      {"name": "big-bang", "scores": {"speed": 0.95},
+       "evidence_confidence": 0.6, "reversible": false, "hard_blocks": [],
+       "description": "Deploy everywhere at once; rollback restores a snapshot."}
+    ]
+  }
+  ```
 - `hikmah deliberate` — independent challenge lanes; risk and human-impact lanes veto (never averaged away).
 - `hikmah ask` — typed decision port (choice / score / noul) with all-or-nothing admission.
 - `hikmah predict` / `hikmah outcome` / `hikmah calibration` — record forecasts, write back outcomes, keep score (Brier + ECE; a family counts as calibrated only with ≥50 outcomes, a passing Spiegelhalter Z, and a Brier that beats the base rate).

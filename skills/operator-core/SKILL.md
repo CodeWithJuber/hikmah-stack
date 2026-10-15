@@ -167,6 +167,8 @@ For the executable memory contract, use the `cognitive-kernel` skill when it is 
 
 ## Execute with the kernel
 
+Requires the `hikmah` binary on PATH; the plugin does not install it. Until the next release reaches crates.io, install it from source: `cargo install --git https://github.com/CodeWithJuber/hikmah-stack hikmah-kernel --locked`. If `command -v hikmah` fails, say so and skip these commands instead of improvising.
+
 - `hikmah remember --kind commitment --content ... --deadline +48h` — prospective commitments surface automatically when overdue, no recall query needed.
 - `hikmah commitments --within-hours 168` / `hikmah fulfill --id <trace-id>` — list open commitments and close them.
 - `hikmah consolidate` — evidence-preserving consolidation proposals (never auto-promotion; model output never counts as support).
