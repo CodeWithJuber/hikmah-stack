@@ -8,9 +8,10 @@ without the `hikmah` binary. Both implementations are tested against `truth_gate
 The gate does NOT fact-check. It blocks only when an un-negated completion claim co-occurs with
 an un-negated unfinished marker or a first-person future-work promise. Whole words only, negation
 just before a word cancels it, and fenced or inline code is ignored. A word that names a thing is
-not a marker ("the TODO list widget", "a Coming soon badge", "the search input placeholder", a
-quoted "Coming soon"), unless the rest of its clause says it is still open ("the search
-placeholder still needs real copy"). "TODO comment" and "TODO item" name a thing only when the
+not a marker ("the TODO list widget", "a Coming soon badge", "the search input placeholder", "a
+skeleton placeholder", "the email input now has a placeholder", a quoted "Coming soon", a term
+inside a path or file name such as "the /todo route" or "app/todo/page.tsx"), unless the rest of
+its clause says it is still open ("the search placeholder still needs real copy"). "TODO comment" and "TODO item" name a thing only when the
 rest of the clause says it was dealt with ("the TODO comment in proxy.ts is now handled"), and
 marker syntax ("TODO:", "FIXME(") counts even inside quotes. A "." directly followed by a letter or digit ("proxy.ts")
 does not end a clause. A promise left to the user is an offer, not deferred work: an idiom asking
@@ -22,7 +23,8 @@ way as in Rust (NFC, curly apostrophes, zero-width characters removed, whitespac
 newline mapped to a space) and word boundaries are ASCII, so both implementations agree.
 Malformed payloads (lone surrogate escapes, trailing data, out-of-range numbers) go through the
 same three-stage parse as Rust's `parse_payload`, so a bad payload cannot switch the gate off here
-while Rust still judges it (golden `payload_cases`).
+while Rust still judges it (golden `payload_cases`). A block names what matched (rule, term, and
+character offset in the normalized message), in the same reason text as Rust.
 """
 import json
 import re
@@ -84,10 +86,21 @@ COMPLETION_NEGATORS = {
 UNFINISHED_NEGATORS = {"no", "without", "zero", "removed", "remove", "replaced", "resolved", "cleared"}
 # Words after "placeholder" that make it a UI property: "placeholder text".
 PLACEHOLDER_UI_TERMS = {"text", "attribute", "prop", "image", "color", "value", "copy"}
-# Words before "placeholder" that make it a UI property: "the search input placeholder".
+# Words before "placeholder" that make it a UI property: "the search input placeholder", "a
+# skeleton placeholder". "state" covers "empty-state placeholder".
 PLACEHOLDER_UI_OWNERS = {
     "input", "inputs", "search", "field", "fields", "textarea", "form", "attribute", "select",
+    "skeleton", "loading", "image", "images", "avatar", "avatars", "logo", "chart", "charts",
+    "card", "cards", "state",
 }
+# Form controls whose "placeholder" is the HTML attribute even a few filler words later ("the email
+# input now has a placeholder of you@example.com"), the only words allowed between them, and how
+# many words back the control may sit.
+PLACEHOLDER_INPUT_OWNERS = {"input", "inputs", "field", "fields", "textarea"}
+PLACEHOLDER_OWNER_FILLERS = {
+    "now", "also", "has", "have", "had", "gets", "got", "with", "a", "an", "the", "its", "their",
+}
+PLACEHOLDER_OWNER_REACH = 4
 # Words after "coming soon" that make it UI copy: "a Coming soon badge".
 COMING_SOON_UI_TERMS = {
     "badge", "badges", "banner", "label", "labels", "page", "pages", "state", "pill", "tag",
@@ -109,6 +122,8 @@ QUOTES = "\"'“”"
 CLAUSE_END = ".!?\n;"
 ASCII_WORD = re.compile(r"[A-Za-z0-9]+")
 ASCII_ALNUM = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+# Characters of a path, file name, or identifier token.
+PATH_CHARS = ASCII_ALNUM | frozenset("/\\._-")
 WORD_SPLIT = re.compile(r"[ \n,;:()]+")
 # Payload fallback, mirrored from `parse_payload` in hook.rs.
 SURROGATE_ESCAPE = re.compile(
@@ -177,6 +192,42 @@ def previous_word(text, start):
     while i > 0 and text[i - 1] in ASCII_ALNUM:
         i -= 1
     return text[i:j] or None
+
+
+def input_owns(text, start):
+    """Whether a form control owns this "placeholder" a few words back, with only filler words
+    between them ("the email input now has a placeholder")."""
+    end = start
+    for _ in range(PLACEHOLDER_OWNER_REACH):
+        j = end
+        while j > 0 and text[j - 1] in WORD_GAP:
+            j -= 1
+        i = j
+        while i > 0 and text[i - 1] in ASCII_ALNUM:
+            i -= 1
+        word = text[i:j]
+        if word in PLACEHOLDER_INPUT_OWNERS:
+            return True
+        if word not in PLACEHOLDER_OWNER_FILLERS:
+            return False
+        end = i
+    return False
+
+
+def in_path_token(text, start, end):
+    """Whether start..end sits inside a path or file name ("the /todo route", "app/todo/page.tsx",
+    "todo.ts"): its token, read at most NEGATION_WINDOW_CHARS characters each way, contains a slash
+    or a "." directly followed by a letter or digit. A sentence-ending "TODO." does not."""
+    i = start
+    while i > 0 and start - i < NEGATION_WINDOW_CHARS and text[i - 1] in PATH_CHARS:
+        i -= 1
+    j = end
+    while j < len(text) and j - end < NEGATION_WINDOW_CHARS and text[j] in PATH_CHARS:
+        j += 1
+    token = text[i:j]
+    if "/" in token or "\\" in token:
+        return True
+    return any(token[k] == "." and token[k + 1] in ASCII_ALNUM for k in range(len(token) - 1))
 
 
 def ends_clause(text, i):
@@ -263,9 +314,13 @@ def flags_open_work(text, m):
     def open_after():
         return STILL_OPEN.search(clause_tail(text, m.end())) is not None
 
+    # A term inside a path or file name names it: "the /todo route", "app/todo/page.tsx".
+    if not marker_syntax and in_path_token(text, m.start(), m.end()):
+        return open_after()
     if term == "placeholder":
         ui_text = loose_next_word(text, m.end()) in PLACEHOLDER_UI_TERMS
-        owned = previous_word(text, m.start()) in PLACEHOLDER_UI_OWNERS
+        owned = (previous_word(text, m.start()) in PLACEHOLDER_UI_OWNERS
+                 or input_owns(text, m.start()))
         return not (ui_text or (owned and not open_after()))
     if term == "coming soon":
         return following not in COMING_SOON_UI_TERMS or open_after()
@@ -279,15 +334,31 @@ def flags_open_work(text, m):
     return True
 
 
-def rules_verdict(message):
+def rules_match(message):
+    """What made the rules block, or None: {"rule", "term", "offset"} as in Rust's RulesMatch. The
+    first unfinished marker that flags open work wins, then the first promise that is not an offer.
+    The offset counts characters of the normalized message."""
     text = normalize(message)
     if not any(not negated(text, m.start(), COMPLETION_NEGATORS) for m in COMPLETION.finditer(text)):
-        return False
-    if any(flags_open_work(text, m) for m in UNFINISHED.finditer(text)):
-        return True
+        return None
+    for m in UNFINISHED.finditer(text):
+        if flags_open_work(text, m):
+            return {"rule": "unfinished", "term": m.group(0), "offset": m.start()}
     # A promise the user has to trigger ("If you want, I'll ...") is an offer, not deferred work.
     promises = list(PROMISE.finditer(text))
-    return any(not is_offer(text, promises, k) for k in range(len(promises)))
+    for k, m in enumerate(promises):
+        if not is_offer(text, promises, k):
+            return {"rule": "promise", "term": m.group(0), "offset": m.start()}
+    return None
+
+
+def rules_verdict(message):
+    return rules_match(message) is not None
+
+
+def block_reason(match):
+    """The block reason, naming the match; identical to RulesMatch::reason in hook.rs."""
+    return f"{BLOCK_REASON} Matched `{match['term']}` at character {match['offset']}."
 
 
 def truthy(value):
@@ -364,8 +435,9 @@ def decide(raw_bytes):
     message = payload.get("last_assistant_message")
     if not isinstance(message, str) or not message.strip():
         return {}
-    if rules_verdict(message):
-        return {"decision": "block", "reason": BLOCK_REASON}
+    match = rules_match(message)
+    if match is not None:
+        return {"decision": "block", "reason": block_reason(match)}
     return {}
 
 

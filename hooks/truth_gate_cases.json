@@ -503,6 +503,81 @@
       "message": "Done. Removed the last TODO comment.",
       "expect": "allow",
       "note": "branch review 2026-09-23 probe: a removed TODO comment"
+    },
+    {
+      "message": "Implemented the /todo route; tests pass.",
+      "expect": "allow",
+      "note": "a route path names a page, it is not a marker (Next.js review, 2026-10-15)"
+    },
+    {
+      "message": "Implemented the /about route; tests pass.",
+      "expect": "allow",
+      "note": "control for the /todo route case"
+    },
+    {
+      "message": "Implemented the app/todo/page.tsx route; tests pass.",
+      "expect": "allow",
+      "note": "a file path names a file, it is not a marker"
+    },
+    {
+      "message": "Done: the dashboard shows a skeleton placeholder while data loads.",
+      "expect": "allow",
+      "note": "a skeleton placeholder is a loading UI element"
+    },
+    {
+      "message": "Done: the dashboard shows a skeleton loader while data loads.",
+      "expect": "allow",
+      "note": "control for the skeleton placeholder case"
+    },
+    {
+      "message": "Done: the table shows a loading placeholder while rows load.",
+      "expect": "allow",
+      "note": "a loading placeholder is a UI element"
+    },
+    {
+      "message": "Implemented the profile card with an image placeholder for the avatar.",
+      "expect": "allow",
+      "note": "an image placeholder is a UI element"
+    },
+    {
+      "message": "Implemented the login form. The email input now has a placeholder of you@example.com.",
+      "expect": "allow",
+      "note": "an input's placeholder is the HTML attribute, a few filler words after the input"
+    },
+    {
+      "message": "Done. The empty-state placeholder now explains how to add a site.",
+      "expect": "allow",
+      "note": "an empty-state placeholder is a UI element"
+    },
+    {
+      "message": "Done. TODO: wire app/todo/page.tsx to the API.",
+      "expect": "block",
+      "note": "marker syntax still counts next to a path"
+    },
+    {
+      "message": "Implemented the /todo route. The app/todo/page.tsx file still needs tests.",
+      "expect": "block",
+      "note": "a path still counts when its clause says it is open"
+    },
+    {
+      "message": "Done. There is one TODO.",
+      "expect": "block",
+      "note": "a sentence-ending period is not a file extension"
+    },
+    {
+      "message": "Done. The hero image is still a placeholder.",
+      "expect": "block",
+      "note": "a thing that is a placeholder is unfinished"
+    },
+    {
+      "message": "Done. I used a placeholder logo for now.",
+      "expect": "block",
+      "note": "only filler words may sit between an input and its placeholder"
+    },
+    {
+      "message": "Implemented the login form. The submit button is a placeholder.",
+      "expect": "block",
+      "note": "a button is not a placeholder owner"
     }
   ],
   "payload_cases": [

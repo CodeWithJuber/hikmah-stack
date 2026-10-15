@@ -12,8 +12,27 @@ fn invalid(message: impl Into<String>) -> KernelError {
     KernelError::Invalid(message.into())
 }
 
+/// Validate the repository without checking the `hikmah` commands skills name; the `hikmah
+/// validate` command uses [`validate_repo_with_cli`].
 pub fn validate_repo(root: impl AsRef<Path>) -> Result<Vec<String>> {
-    let root = root.as_ref();
+    validate(root.as_ref(), None)
+}
+
+/// Validate the repository, and also check that every `hikmah <subcommand> --flag` a skill
+/// names exists in `cli` (the binary's clap definition), so a skill cannot cite a command or
+/// flag the binary rejects.
+pub fn validate_repo_with_cli(root: impl AsRef<Path>, cli: &clap::Command) -> Result<Vec<String>> {
+    validate(root.as_ref(), Some(cli))
+}
+
+fn validate(root: &Path, cli: Option<&clap::Command>) -> Result<Vec<String>> {
+    // Built once, so help flags and global options are visible on every subcommand.
+    let cli = cli.map(|cli| {
+        let mut cli = cli.clone();
+        cli.build();
+        cli
+    });
+    let mut command_refs = 0;
     let required = [
         ".codex-plugin/plugin.json",
         ".claude-plugin/plugin.json",
@@ -201,10 +220,114 @@ pub fn validate_repo(root: impl AsRef<Path>) -> Result<Vec<String>> {
                 "skill `{name}` names no `hikmah` command: add an \"Execute with the kernel\" section wiring it to the binary"
             )));
         }
+        if let Some(cli) = &cli {
+            let problems = skill_command_problems(&text, cli);
+            if !problems.is_empty() {
+                return Err(invalid(format!(
+                    "skill `{name}` names commands the `hikmah` binary rejects: {}",
+                    problems.join("; ")
+                )));
+            }
+            command_refs += skill_command_refs(&text).len();
+        }
         check_skill_links(&entry.path())?;
     }
     notes.push(format!("{} unique skills", skill_names.len()));
+    if cli.is_some() {
+        notes.push(format!(
+            "{command_refs} skill command reference(s) match the CLI"
+        ));
+    }
     Ok(notes)
+}
+
+/// The `hikmah ...` commands a skill names: inline code spans that start with `hikmah`, and lines
+/// that start with `hikmah` (or `$ hikmah`) inside fenced code blocks.
+fn skill_command_refs(text: &str) -> Vec<&str> {
+    let is_command = |code: &str| code == "hikmah" || code.starts_with("hikmah ");
+    let mut refs = Vec::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            let code = trimmed.strip_prefix("$ ").unwrap_or(trimmed);
+            if is_command(code) {
+                refs.push(code);
+            }
+            continue;
+        }
+        // Between backticks: every odd piece of the line is inline code.
+        refs.extend(
+            line.split('`')
+                .skip(1)
+                .step_by(2)
+                .filter(|code| is_command(code)),
+        );
+    }
+    refs
+}
+
+/// Problems with the `hikmah` commands a skill names: an unknown subcommand, or a `--flag` the
+/// subcommand (or the global options) does not have. `cli` must be built (`Command::build`).
+/// Placeholders such as `<trace-id>`, `...`, or `[--record]`'s brackets are not checked.
+pub fn skill_command_problems(text: &str, cli: &clap::Command) -> Vec<String> {
+    let mut problems = Vec::new();
+    for reference in skill_command_refs(text) {
+        let mut command = cli;
+        let mut path = String::from("hikmah");
+        let mut tokens = reference.split_whitespace().skip(1);
+        while let Some(token) = tokens.next() {
+            let token = token
+                .trim_start_matches(['[', '('])
+                .trim_end_matches([']', ')', ',', ';', '.']);
+            if let Some(flag) = token.strip_prefix("--") {
+                let (name, inline_value) = match flag.split_once('=') {
+                    Some((name, value)) => (name, Some(value)),
+                    None => (flag, None),
+                };
+                if name.is_empty() {
+                    continue;
+                }
+                let arg = command
+                    .get_arguments()
+                    .find(|arg| arg.get_long() == Some(name));
+                match arg {
+                    None => problems.push(format!("`{path}` has no `--{name}` (in `{reference}`)")),
+                    // Before the subcommand, a flag's value must not be read as the subcommand.
+                    Some(arg)
+                        if command.has_subcommands()
+                            && inline_value.is_none()
+                            && arg.get_action().takes_values() =>
+                    {
+                        tokens.next();
+                    }
+                    Some(_) => {}
+                }
+                continue;
+            }
+            if !command.has_subcommands() {
+                continue;
+            }
+            if !token.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                break; // a placeholder such as `<command>`: nothing more to check
+            }
+            match command.find_subcommand(token) {
+                Some(sub) => {
+                    command = sub;
+                    path = format!("{path} {token}");
+                }
+                None => {
+                    problems.push(format!("`{path}` has no subcommand `{token}`"));
+                    break;
+                }
+            }
+        }
+    }
+    problems
 }
 
 /// A skill is doctrine plus the commands that execute it: its SKILL.md must name at least
@@ -393,6 +516,46 @@ mod tests {
             vec!["x.md", "https://e.com"]
         );
         fs::remove_dir_all(&skill).unwrap();
+    }
+
+    #[test]
+    fn skill_commands_must_exist_in_the_cli() {
+        use clap::{Arg, ArgAction, Command};
+        let mut cli = Command::new("hikmah")
+            .version("1.0.0")
+            .arg(Arg::new("policy").long("policy").global(true))
+            .subcommand(
+                Command::new("decide")
+                    .arg(Arg::new("frame").long("frame").required(true))
+                    .arg(Arg::new("engine").long("engine"))
+                    .arg(Arg::new("record").long("record").action(ArgAction::SetTrue)),
+            )
+            .subcommand(Command::new("get").arg(Arg::new("id")));
+        cli.build();
+        let problems = |text: &str| skill_command_problems(text, &cli);
+
+        for ok in [
+            "- `hikmah decide --frame frame.json [--engine jev --record]` ranks options.",
+            "`hikmah get <trace-id>` / `hikmah` on PATH / `cargo install --git x hikmah-kernel`",
+            "`hikmah --policy p.json decide --frame f.json`",
+            "`hikmah decide --policy=p.json --frame f.json --help`",
+            "`hikmah --version`",
+            "```bash\nhikmah decide --frame f.json\n$ hikmah get tr_1\n```",
+            "the hikmah binary, never `hikmah-kernel` alone",
+        ] {
+            assert_eq!(problems(ok), Vec::<String>::new(), "{ok}");
+        }
+
+        // The regression this check exists for: flags the binary rejects.
+        let wrong = problems("- `hikmah decide --criteria ... --options ...` ranks options.");
+        assert_eq!(wrong.len(), 2, "{wrong:?}");
+        assert!(wrong[0].contains("`hikmah decide` has no `--criteria`"));
+        assert!(wrong[1].contains("`--options`"));
+        assert_eq!(problems("`hikmah decid --frame f`").len(), 1);
+        assert_eq!(problems("`hikmah --verbose decide --frame f`").len(), 1);
+        assert_eq!(problems("```\nhikmah nope\n```").len(), 1);
+        // A fence closes: text after it is prose again, and inline spans are checked.
+        assert_eq!(problems("```\nx\n```\n`hikmah get --bogus`").len(), 1);
     }
 
     #[test]

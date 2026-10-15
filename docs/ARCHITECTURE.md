@@ -34,7 +34,7 @@ Engines are optional. A proposal engine returns text; a decision engine (see [Ty
 
 ## Rust-first Truth Gate
 
-The primary completion gate is `hikmah hook`. `hooks/truth_gate.sh` runs the plugin's `bin/hikmah`, then a `hikmah` on PATH, then the Python fallback, and finally allows. It checks each candidate's output and always exits 0 with JSON, so a stale or broken binary can neither block a turn nor loop the host. It never compiles code at stop time, because cargo and rustup read configuration from the user's project directory. Rust and Python are tested against the same golden cases (`hooks/truth_gate_cases.json`). With `HIKMAH_HOOK_ENGINE=jev`, the Rust gate asks Jev one yes/no question and falls back to the deterministic rules on any engine problem.
+The primary completion gate is `hikmah hook`. `hooks/truth_gate.sh` runs `bin/hikmah` inside the plugin if one was placed there (the plugin ships none), then a `hikmah` on PATH, then the Python fallback, and finally allows. It checks each candidate's output and always exits 0 with JSON, so a stale or broken binary can neither block a turn nor loop the host. It never compiles code at stop time, because cargo and rustup read configuration from the user's project directory. Rust and Python are tested against the same golden cases (`hooks/truth_gate_cases.json`). With `HIKMAH_HOOK_ENGINE=jev`, the Rust gate asks Jev one yes/no question and falls back to the deterministic rules on any engine problem.
 
 ## No forced graph/vector database
 

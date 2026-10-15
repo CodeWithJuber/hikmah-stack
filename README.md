@@ -32,7 +32,9 @@ Every claim above is backed by executable evidence in the table below, and the [
 One install, no services, no API keys, everything local. Five commands tell the kernel's whole story: write a memory, read it back, watch two sources disagree, see the conflict listed, prove the chain is intact.
 
 ```bash
-cargo install hikmah-kernel
+# Until the next release reaches crates.io, install from the repository: the published
+# 3.1.0 crate predates `remember-batch` and the `HIKMAH_AGENT_SESSION=0` opt-out.
+cargo install --git https://github.com/CodeWithJuber/hikmah-stack hikmah-kernel --locked
 
 # 1. Write a memory your agent can't quietly rewrite
 hikmah init
@@ -106,7 +108,7 @@ The table below separates executable evidence from architectural intent.
 | Retrieval | Deterministic relevance gate (terms or tags must match), light stemming, CJK bigrams, metadata scaling, duplicate folding; no embeddings |
 | Model integration | Typed `DecisionEngine` port with `NoEngine` and an opt-in TypeSafe Jev adapter; the text `ProposalEngine` still ships only `NoModel` |
 | Agent packaging | Portable instruction skills and thin Codex, Claude Code, and Kimi manifests |
-| Tests | 180 unit and integration tests (2 ignored: an explicit release-mode performance gate and a live TypeSafe Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
+| Tests | 185 unit and integration tests (2 ignored: an explicit release-mode performance gate and a live TypeSafe Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
 | Deployment | Local source/CLI use; no hosted service or public production deployment is claimed |
 
 ### What this repository does not claim
@@ -225,7 +227,7 @@ Inside an AI agent session, `remember`, `predict`, and `outcome` record the loca
 
 `verify-ledger` exits non-zero when the chain, the head file, or a pinned `--expect-head` does not match, and when records follow the head file that no hikmah write acknowledged (it lists them under `unacknowledged`). While they disagree, writes are refused. Reads such as `recall` still include those records, so inspect them before relying on what they claim. After a person inspects appended records, `verify-ledger --accept-tail` acknowledges them; after a deliberate repair, `verify-ledger --reset-head` accepts the current ledger. Neither can be combined with `--expect-head`, which only a plain verification checks.
 
-By default, local memory is written to `.hikmah/memory.jsonl`.
+By default, local memory is written to `.hikmah/memory.jsonl`, next to its `.head` and `.lock` files. Add `.hikmah/` to your project's `.gitignore`: traces default to `private`, and inside an agent session they carry `agent-session:` locators. For tamper evidence, keep the `head.hash` that `verify-ledger` prints somewhere the writer cannot reach (CI, for example) and check against it with `verify-ledger --expect-head <hash>`.
 
 Memory limits, recall and consolidation thresholds, every recall weight, and the calibration sample minimum (`calibration_min_outcomes`) are fields of the kernel policy. `hikmah policy --print-defaults` prints them. The decision, council, and statistical constants (for example the reversibility band, the council's block level, or the Z test's 1.96) are code, not policy. `hikmah --policy my-policy.json <command>` (or `HIKMAH_POLICY=my-policy.json`) overrides any subset. Missing fields keep their defaults, unknown fields and out-of-range values are errors, and the hook never reads the policy. The defaults are design choices, not calibrated values.
 
@@ -294,7 +296,7 @@ This command adds the catalog source; install and test the plugin from the ChatG
 /plugin install hikmah-stack@hikmah-stack
 ```
 
-If the install summary asks you to activate the plugin, run `/reload-plugins`. The repository also includes a read-only Claude orchestrator adapter and a deterministic-plus-prompt completion check.
+If the install summary asks you to activate the plugin, run `/reload-plugins`. The repository also includes a read-only Claude orchestrator adapter and a deterministic completion check (the Truth Gate Stop hook).
 
 ### Kimi
 

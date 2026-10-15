@@ -13,14 +13,16 @@
 //!   marker or a first-person future-work promise;
 //! - a word that names a thing is not a marker: `todo`, `tbd` or `fixme` followed by a feature
 //!   noun such as `list` or `app` (`the TODO list widget`), `coming soon` followed by a UI word
-//!   such as `badge` or `page`, and `placeholder` after `input`, `search` or `field`. Each still
-//!   counts when the rest of its clause says it is open (`remains`, `left`, `pending`, `still
-//!   needs`). `todo`, `tbd` or `fixme` followed by `comment` or `item` names a thing only when
-//!   the rest of its clause says it was dealt with (`the TODO comment in proxy.ts is now
-//!   handled`) and nothing in the clause says it is open, because `I left a TODO comment` is open
-//!   work. `placeholder` before `text` (the older rule) is always UI. A term right after an
-//!   opening quote is mentioned (`the badge reads "Coming soon"`), except marker syntax (`"TODO:
-//!   retries"`, `FIXME(`), which always counts;
+//!   such as `badge` or `page`, and `placeholder` after `input`, `search`, `field`, `skeleton`,
+//!   `loading`, `image` and similar (or a form control a few filler words back: `the email input
+//!   now has a placeholder`). A term inside a path or file name names it too (`the /todo route`,
+//!   `app/todo/page.tsx`). Each still counts when the rest of its clause says it is open
+//!   (`remains`, `left`, `pending`, `still needs`). `todo`, `tbd` or `fixme` followed by
+//!   `comment` or `item` names a thing only when the rest of its clause says it was dealt with
+//!   (`the TODO comment in proxy.ts is now handled`) and nothing in the clause says it is open,
+//!   because `I left a TODO comment` is open work. `placeholder` before `text` (the older rule)
+//!   is always UI. A term right after an opening quote is mentioned (`the badge reads "Coming
+//!   soon"`), except marker syntax (`"TODO: retries"`, `FIXME(`), which always counts;
 //! - a clause ends at `.`, `!`, `?`, `;` or a newline, but not at a `.` directly followed by a
 //!   letter or digit (`proxy.ts`, `v2.1`);
 //! - a promise left to the user is an offer, not deferred work: an idiom asking for the user's
@@ -48,6 +50,9 @@
 //! answers is appended there as a `prediction` trace (family `truth_gate.false_completion.v2`)
 //! after the verdict is written, so outcomes recorded later can set the threshold from data
 //! (`hikmah gate-threshold`). Recording is best effort and never changes the verdict.
+//!
+//! A rules block names what matched (`RulesMatch`: the rule, the term, and its character offset
+//! in the normalized message) in its reason and in `gate-explain`.
 //!
 //! `hooks/truth_gate_cases.json` holds golden cases shared with the Python fallback.
 use crate::decision_port::{ask, DecisionEngine, DecisionRequest, Question, QuestionKind};
@@ -164,7 +169,8 @@ const PLACEHOLDER_UI_TERMS: &[&str] = &[
     "value",
     "copy",
 ];
-/// Words before `placeholder` that make it a UI property: `the search input placeholder`.
+/// Words before `placeholder` that make it a UI property: `the search input placeholder`,
+/// `a skeleton placeholder`, `an image placeholder`. `state` covers `empty-state placeholder`.
 const PLACEHOLDER_UI_OWNERS: &[&str] = &[
     "input",
     "inputs",
@@ -175,7 +181,28 @@ const PLACEHOLDER_UI_OWNERS: &[&str] = &[
     "form",
     "attribute",
     "select",
+    "skeleton",
+    "loading",
+    "image",
+    "images",
+    "avatar",
+    "avatars",
+    "logo",
+    "chart",
+    "charts",
+    "card",
+    "cards",
+    "state",
 ];
+/// Form controls whose `placeholder` is the HTML attribute even a few filler words later:
+/// `the email input now has a placeholder of you@example.com`.
+const PLACEHOLDER_INPUT_OWNERS: &[&str] = &["input", "inputs", "field", "fields", "textarea"];
+/// The only words that may sit between such a control and `placeholder`.
+const PLACEHOLDER_OWNER_FILLERS: &[&str] = &[
+    "now", "also", "has", "have", "had", "gets", "got", "with", "a", "an", "the", "its", "their",
+];
+/// How many words back such a control may sit.
+const PLACEHOLDER_OWNER_REACH: usize = 4;
 /// Words after `coming soon` that make it UI copy: `a Coming soon badge`.
 const COMING_SOON_UI_TERMS: &[&str] = &[
     "badge", "badges", "banner", "label", "labels", "page", "pages", "state", "pill", "tag",
@@ -283,6 +310,56 @@ fn previous_word(text: &str, start: usize) -> Option<&str> {
         .trim_end_matches(|c: char| c.is_ascii_alphanumeric())
         .len();
     (from < head.len()).then(|| &head[from..])
+}
+
+/// Whether a form control owns this `placeholder` a few words back, with only filler words
+/// between them: `the email input now has a placeholder`.
+fn input_owns(text: &str, start: usize) -> bool {
+    let mut end = start;
+    for _ in 0..PLACEHOLDER_OWNER_REACH {
+        let head = text[..end].trim_end_matches(WORD_GAP);
+        let from = head
+            .trim_end_matches(|c: char| c.is_ascii_alphanumeric())
+            .len();
+        let word = &head[from..];
+        if PLACEHOLDER_INPUT_OWNERS.contains(&word) {
+            return true;
+        }
+        if !PLACEHOLDER_OWNER_FILLERS.contains(&word) {
+            return false;
+        }
+        end = from;
+    }
+    false
+}
+
+/// Characters of a path, file name, or identifier token.
+fn is_path_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '/' | '\\' | '.' | '_' | '-')
+}
+
+/// Whether `start..end` sits inside a path or file name (`the /todo route`, `app/todo/page.tsx`,
+/// `todo.ts`): its token, read at most `NEGATION_WINDOW_CHARS` characters each way, contains a
+/// slash or a `.` directly followed by a letter or digit. A sentence-ending `TODO.` does not.
+fn in_path_token(text: &str, start: usize, end: usize) -> bool {
+    let before = text[..start]
+        .chars()
+        .rev()
+        .take(NEGATION_WINDOW_CHARS)
+        .take_while(|&c| is_path_char(c))
+        .count();
+    let after = text[end..]
+        .chars()
+        .take(NEGATION_WINDOW_CHARS)
+        .take_while(|&c| is_path_char(c))
+        .count();
+    // Path characters are ASCII, so counts are byte lengths.
+    let token = &text[start - before..end + after];
+    token.contains(['/', '\\'])
+        || token
+            .as_bytes()
+            .windows(2)
+            .any(|pair| pair[0] == b'.' && pair[1].is_ascii_alphanumeric())
 }
 
 /// Whether the character `c` at byte `i` ends a clause. A `.` directly followed by a letter or
@@ -398,12 +475,17 @@ fn flags_open_work(text: &str, m: &regex::Match) -> bool {
     // A named thing still counts when the rest of its clause says it is open
     // (`the search placeholder still needs real copy`).
     let open_after = || rules.still_open.is_match(clause_tail(text, m.end()));
+    // A term inside a path or file name names it: `the /todo route`, `app/todo/page.tsx`.
+    if !marker_syntax && in_path_token(text, m.start(), m.end()) {
+        return open_after();
+    }
     match term {
         "placeholder" => {
             let ui_text =
                 loose_next_word(text, m.end()).is_some_and(|w| PLACEHOLDER_UI_TERMS.contains(&w));
-            let owned =
-                previous_word(text, m.start()).is_some_and(|w| PLACEHOLDER_UI_OWNERS.contains(&w));
+            let owned = previous_word(text, m.start())
+                .is_some_and(|w| PLACEHOLDER_UI_OWNERS.contains(&w))
+                || input_owns(text, m.start());
             !(ui_text || (owned && !open_after()))
         }
         "coming soon" => !next_in(COMING_SOON_UI_TERMS) || open_after(),
@@ -422,8 +504,39 @@ fn flags_open_work(text: &str, m: &regex::Match) -> bool {
     }
 }
 
-/// Deterministic verdict: `true` means block.
-pub fn rules_verdict(message: &str) -> bool {
+/// What made the deterministic rules block, so a false block can be traced to its cause.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RulesMatch {
+    /// `unfinished` (a marker such as `todo` or `placeholder`) or `promise` (deferred work).
+    pub rule: &'static str,
+    /// The matched text as the rules see it (lowercased).
+    pub term: String,
+    /// Character offset of the match in the normalized message: lowercased, with each code span
+    /// replaced by one space and zero-width characters removed.
+    pub offset: usize,
+}
+
+impl RulesMatch {
+    fn new(rule: &'static str, text: &str, m: &regex::Match) -> Self {
+        Self {
+            rule,
+            term: m.as_str().to_string(),
+            offset: text[..m.start()].chars().count(),
+        }
+    }
+
+    /// The hook's block reason, naming this match.
+    pub fn reason(&self) -> String {
+        format!(
+            "{BLOCK_REASON} Matched `{}` at character {}.",
+            self.term, self.offset
+        )
+    }
+}
+
+/// Deterministic verdict with its cause: `Some` means block. The first unfinished marker that
+/// flags open work wins, then the first promise that is not an offer.
+pub fn rules_match(message: &str) -> Option<RulesMatch> {
     let text = normalize(message);
     let rules = rules();
     let claims_completion = rules
@@ -431,17 +544,24 @@ pub fn rules_verdict(message: &str) -> bool {
         .find_iter(&text)
         .any(|m| !negated(&text, m.start(), COMPLETION_NEGATORS));
     if !claims_completion {
-        return false;
+        return None;
     }
-    let unfinished = rules
+    if let Some(m) = rules
         .unfinished
         .find_iter(&text)
-        .any(|m| flags_open_work(&text, &m));
-    if unfinished {
-        return true;
+        .find(|m| flags_open_work(&text, m))
+    {
+        return Some(RulesMatch::new("unfinished", &text, &m));
     }
     let promises: Vec<regex::Match> = rules.promise.find_iter(&text).collect();
-    (0..promises.len()).any(|k| !is_offer(&text, &promises, k))
+    (0..promises.len())
+        .find(|&k| !is_offer(&text, &promises, k))
+        .map(|k| RulesMatch::new("promise", &text, &promises[k]))
+}
+
+/// Deterministic verdict: `true` means block.
+pub fn rules_verdict(message: &str) -> bool {
+    rules_match(message).is_some()
 }
 
 /// Parse the hook payload. Hosts can emit lone surrogate escapes (a truncated emoji), numbers
@@ -675,6 +795,8 @@ pub struct GateVerdict {
     pub path: GatePath,
     /// The deterministic rules' verdict, always computed so both can be compared.
     pub rules_block: bool,
+    /// What the rules matched when they block: the rule, the term, and its offset.
+    pub rules_match: Option<RulesMatch>,
     /// Engine `P(the completion claim would fail verification)`, when the engine answered.
     pub p: Option<f64>,
     /// Whether the engine alone would block (`p >= threshold`), when it answered.
@@ -706,7 +828,8 @@ pub fn evaluate_message(
     settings: impl Into<GateSettings>,
 ) -> GateVerdict {
     let GateSettings { threshold, lift } = settings.into();
-    let rules_block = rules_verdict(message);
+    let rules_match = rules_match(message);
+    let rules_block = rules_match.is_some();
     let mut verdict = GateVerdict {
         block: rules_block,
         path: GatePath::Rules,
@@ -720,7 +843,8 @@ pub fn evaluate_message(
         engine_note: None,
         engine_latency_ms: None,
         skipped: None,
-        reason: rules_block.then(|| BLOCK_REASON.to_string()),
+        reason: rules_match.as_ref().map(RulesMatch::reason),
+        rules_match,
         prediction: None,
     };
     let Some(engine) = engine else {
@@ -853,7 +977,8 @@ mod tests {
             verdict.block && !verdict.lifted,
             "without the opt-in, a low engine p cannot lift a rules block"
         );
-        assert_eq!(verdict.reason.as_deref(), Some(BLOCK_REASON));
+        let todo_reason = format!("{BLOCK_REASON} Matched `todo` at character 6.");
+        assert_eq!(verdict.reason.as_deref(), Some(todo_reason.as_str()));
 
         let high = StaticEngine {
             answers: [(
@@ -907,7 +1032,10 @@ mod tests {
         // ...an answer at or above it does not...
         let kept = evaluate_message(rules_block, Some(&engine(0.2)), lift);
         assert!(kept.block && !kept.lifted);
-        assert_eq!(kept.reason.as_deref(), Some(BLOCK_REASON));
+        assert_eq!(
+            kept.reason.as_deref(),
+            Some(format!("{BLOCK_REASON} Matched `todo` at character 6.").as_str())
+        );
         // ...and a lift value above the threshold never lifts an engine block.
         let high_lift = GateSettings {
             threshold: 0.6,
@@ -923,6 +1051,52 @@ mod tests {
         assert!(failed.block && !failed.lifted);
         assert_eq!(failed.path, GatePath::RulesFallback);
         assert!(evaluate_message(rules_block, None, lift).block);
+    }
+
+    #[test]
+    fn a_rules_block_names_what_matched() {
+        let marker = rules_match("Done. TODO: add tests").expect("blocks");
+        assert_eq!(
+            (marker.rule, marker.term.as_str(), marker.offset),
+            ("unfinished", "todo", 6)
+        );
+        // Offsets count characters of the normalized text, so a non-ASCII letter counts once.
+        let promise = rules_match("Livré et terminé. Fixed; I'll test it later.").expect("blocks");
+        assert_eq!(
+            (promise.rule, promise.term.as_str(), promise.offset),
+            ("promise", "i'll test", 25)
+        );
+        assert_eq!(rules_match("Fixed and tested."), None);
+
+        let verdict = evaluate_message("Implemented it. FIXME(perf) later", None, 0.6);
+        let shown = serde_json::to_value(&verdict).unwrap();
+        assert_eq!(shown["rules_match"]["term"], "fixme");
+        assert_eq!(shown["rules_match"]["offset"], 16);
+        assert!(verdict
+            .reason
+            .unwrap()
+            .ends_with("Matched `fixme` at character 16."));
+        let clean = serde_json::to_value(evaluate_message("Fixed.", None, 0.6)).unwrap();
+        assert!(clean["rules_match"].is_null());
+    }
+
+    #[test]
+    fn a_term_inside_a_path_names_it() {
+        for message in [
+            "Implemented the /todo route; tests pass.",
+            "Implemented the app/todo/page.tsx route; tests pass.",
+            "Done: moved app\\todo\\page.tsx and todo.ts.",
+            "Done. Renamed placeholder.svg in public/.",
+        ] {
+            assert!(!rules_verdict(message), "should allow: {message}");
+        }
+        for message in [
+            "Done. TODO: wire app/todo/page.tsx to the API.",
+            "Done. There is one TODO.",
+            "Implemented the /todo route. The app/todo/page.tsx file still needs tests.",
+        ] {
+            assert!(rules_verdict(message), "should block: {message}");
+        }
     }
 
     #[test]

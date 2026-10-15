@@ -169,12 +169,46 @@ fn get_and_why_fail_cleanly_on_unknown_ids() {
     let store = common::temp_store("why-missing");
     let store_arg = store.to_str().unwrap();
 
+    // Before `init`, the store itself is missing, and the error says so.
+    for subcommand in ["get", "why"] {
+        let (ok, _out, err) = run(&[subcommand, "--store", store_arg, "tr_missing"]);
+        assert!(!ok, "{subcommand} should fail on a missing store");
+        assert!(
+            err.contains("memory store not found") && !err.contains("trace not found"),
+            "{subcommand} stderr should name the missing store, got: {err}"
+        );
+    }
+
+    let (ok, _out, err) = run(&["init", "--store", store_arg]);
+    assert!(ok, "init failed: {err}");
     for subcommand in ["get", "why"] {
         let (ok, _out, err) = run(&[subcommand, "--store", store_arg, "tr_missing"]);
         assert!(!ok, "{subcommand} should fail on an unknown id");
         assert!(
-            err.contains("trace not found"),
+            err.contains("trace not found: tr_missing"),
             "{subcommand} stderr should name the problem, got: {err}"
         );
     }
+}
+
+#[test]
+fn a_reader_that_closes_stdout_early_is_not_a_panic() {
+    // `hikmah deliberate | head -0`: the reader is gone before hikmah writes.
+    let (reader, writer) = std::io::pipe().expect("pipe");
+    drop(reader);
+    let output = hikmah()
+        .args(["deliberate", "--irreversible-actions", "1"])
+        .stdout(writer)
+        .output()
+        .expect("run hikmah");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit {:?}: {stderr}",
+        output.status
+    );
+    assert!(
+        stderr.is_empty(),
+        "no panic or error expected, got: {stderr}"
+    );
 }

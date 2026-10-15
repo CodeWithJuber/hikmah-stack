@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use hikmah_kernel::calibration::FamilyFilter;
 use hikmah_kernel::council::{deliberate, DeliberationInput};
 use hikmah_kernel::decision::{estimate_missing_criteria, evaluate, DecisionFrame};
@@ -12,12 +12,12 @@ use hikmah_kernel::policy::KernelPolicy;
 use hikmah_kernel::principal;
 use hikmah_kernel::recall::RecallQuery;
 use hikmah_kernel::trace::{parse_deadline, OutcomeRecord, PrivacyClass, Trace, TraceKind};
-use hikmah_kernel::validate::validate_repo;
+use hikmah_kernel::validate::validate_repo_with_cli;
 use hikmah_kernel::{KernelError, MemoryStore, Result};
 use serde::Deserialize;
 use serde_json::json;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -148,12 +148,17 @@ enum Command {
         #[arg(long)]
         reason: String,
     },
+    /// List active commitments whose deadline has passed or falls within the window, earliest
+    /// deadline first.
     Commitments {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
+        /// Window in hours from now (overdue commitments always show).
         #[arg(long, default_value_t = 168)]
         within_hours: u64,
     },
+    /// Propose consolidations: claims supported by enough independent, confident sources.
+    /// Proposals only; nothing is promoted, and model-authored traces never count as support.
     Consolidate {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
@@ -179,7 +184,11 @@ enum Command {
         #[arg(long, conflicts_with = "expect_head")]
         accept_tail: bool,
     },
+    /// Find the shortest sequence of actions that reaches a goal (breadth-first search), bounded
+    /// by the problem's `max_depth` and `max_states`.
     Plan {
+        /// Problem JSON: `initial` and `goal` facts, and `actions` with `requires`, `adds`, and
+        /// `removes` (see `examples/plan-problem.json`).
         #[arg(long)]
         problem: PathBuf,
     },
@@ -199,15 +208,22 @@ enum Command {
         #[arg(long, default_value = DEFAULT_STORE)]
         store: PathBuf,
     },
+    /// Run the challenge lanes over counts you supply and report whether to proceed. Each flag
+    /// is a count; the risk and human-impact lanes veto on a single item.
     Deliberate {
+        /// Consequential claims not yet verified (evidence lane; blocks at 3).
         #[arg(long, default_value_t = 0)]
         unverified_claims: usize,
+        /// Unresolved memory conflicts, as `hikmah conflicts` lists them (memory lane; blocks at 2).
         #[arg(long, default_value_t = 0)]
         memory_conflicts: usize,
+        /// Irreversible actions in scope (risk lane; any one blocks).
         #[arg(long, default_value_t = 0)]
         irreversible_actions: usize,
+        /// Unresolved questions about the effect on people (human-impact lane; any one blocks).
         #[arg(long, default_value_t = 0)]
         human_impact_questions: usize,
+        /// Acceptance criteria still missing (delivery lane; blocks at 3).
         #[arg(long, default_value_t = 0)]
         missing_acceptance_criteria: usize,
     },
@@ -296,7 +312,10 @@ enum Command {
         #[arg(long)]
         batch: bool,
     },
+    /// Check a Hikmah Stack checkout: manifests, versions, hook scripts, golden cases, and
+    /// skills (frontmatter, self-contained links, and `hikmah` commands that exist).
     Validate {
+        /// Repository root to check.
         #[arg(long, default_value = ".")]
         root: PathBuf,
     },
@@ -405,9 +424,14 @@ fn read_batch_input(path: &std::path::Path) -> Result<String> {
 }
 
 fn main() {
-    if let Err(error) = run() {
-        eprintln!("hikmah: {error}");
-        std::process::exit(1);
+    match run() {
+        Ok(()) => {}
+        // The reader of a streaming command (`gate-explain --batch | head`) went away.
+        Err(KernelError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe => {}
+        Err(error) => {
+            eprintln!("hikmah: {error}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -428,9 +452,15 @@ fn load_policy(path: Option<&std::path::Path>) -> Result<KernelPolicy> {
     }
 }
 
+/// Print JSON to stdout. A reader that closed the pipe early (`hikmah recall | head`) is not an
+/// error: the output is dropped and the command finishes with its own exit status.
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(value)?);
-    Ok(())
+    let text = serde_json::to_string_pretty(value)?;
+    let mut stdout = io::stdout().lock();
+    match writeln!(stdout, "{text}").and_then(|()| stdout.flush()) {
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        written => Ok(written?),
+    }
 }
 
 fn select_engine(name: &str) -> Result<Box<dyn DecisionEngine>> {
@@ -854,7 +884,7 @@ fn run() -> Result<()> {
             }
         }
         Command::Validate { root } => {
-            let notes = validate_repo(root)?;
+            let notes = validate_repo_with_cli(root, &Cli::command())?;
             print_json(&json!({"ok": true, "checks": notes}))?;
         }
         Command::Policy { print_defaults } => {
@@ -866,4 +896,31 @@ fn run() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hikmah_kernel::validate::skill_command_problems;
+
+    #[test]
+    fn skill_command_check_uses_the_real_cli() {
+        let mut cli = Cli::command();
+        cli.build();
+        // The line decision-forge used to carry: `decide` only takes `--frame`.
+        let wrong = skill_command_problems("`hikmah decide --criteria a --options b`", &cli);
+        assert_eq!(wrong.len(), 2, "{wrong:?}");
+        for ok in [
+            "`hikmah decide --frame frame.json [--engine jev --record]`",
+            "`hikmah remember-batch --batch-file records.jsonl`",
+            "`hikmah --policy p.json recall --query x --limit 3`",
+            "`hikmah verify-ledger --expect-head <hash>`",
+        ] {
+            assert_eq!(
+                skill_command_problems(ok, &cli),
+                Vec::<String>::new(),
+                "{ok}"
+            );
+        }
+    }
 }

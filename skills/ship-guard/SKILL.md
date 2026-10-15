@@ -136,6 +136,8 @@ Shipping is not the end of cognition. Before calling work complete:
 
 ## Execute with the kernel
 
+Requires the `hikmah` binary on PATH; the plugin does not install it. Until the next release reaches crates.io, install it from source: `cargo install --git https://github.com/CodeWithJuber/hikmah-stack hikmah-kernel --locked`. If `command -v hikmah` fails, say so and skip these commands instead of improvising.
+
 - `hikmah verify-ledger` — prove the memory chain is intact before a release.
 - `hikmah conflicts` — surface open contradictions; nothing ships with an unacknowledged conflict.
 - `hikmah recall --query "<claim>"` — check what was actually recorded before asserting it.

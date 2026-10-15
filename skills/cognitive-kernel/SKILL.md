@@ -92,10 +92,9 @@ Lenses:
 
 ## Execute with the kernel
 
-This skill is doctrine; the `hikmah` binary is the mechanism. When the host
-has it installed:
+This skill is doctrine; the `hikmah` binary is the mechanism. Requires the `hikmah` binary on PATH; the plugin does not install it. Until the next release reaches crates.io, install it from source: `cargo install --git https://github.com/CodeWithJuber/hikmah-stack hikmah-kernel --locked` (the crates.io 3.1.0 build lacks `remember-batch` and the `HIKMAH_AGENT_SESSION=0` opt-out). If `command -v hikmah` fails, say so and skip these commands instead of improvising.
 
-- `hikmah init` — create the ledger-backed store (`.hikmah/memory.jsonl`).
+- `hikmah init` — create the ledger-backed store (`.hikmah/memory.jsonl`). Add `.hikmah/` to the project's `.gitignore`: the store holds private content and agent-session locators.
 - `hikmah remember --kind <observation|belief|commitment|...> --content ... --source ...` — encode a typed trace with provenance.
 - `hikmah remember-batch --batch-file records.jsonl` — encode many traces in one process (one JSON object per line).
 - `hikmah recall --query ...` — relevance-gated recall; every hit carries a `trace_id` and its relevance channels.

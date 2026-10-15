@@ -195,6 +195,8 @@ When one appears, use the Memory Integrity lens and TraceWeave playbook before a
 
 ## Execute with the kernel
 
-- The Truth Gate (`hooks/truth_gate.sh` as the host's Stop hook) screens "done" claims against the transcript; engine mode is a measured screen (about one false completion in six, deliberately not a fact-checker).
+Requires the `hikmah` binary on PATH; the plugin does not install it. Until the next release reaches crates.io, install it from source: `cargo install --git https://github.com/CodeWithJuber/hikmah-stack hikmah-kernel --locked`. If `command -v hikmah` fails, say so and skip these commands instead of improvising.
+
+- The Truth Gate (`hooks/truth_gate.sh` as the host's Stop hook) screens the final assistant message only, not the transcript, for a completion claim next to unfinished work or a deferred promise. It runs the rules only by default (the Python fallback when no `hikmah` binary is on PATH). Engine mode needs the Rust binary plus `TYPESAFE_API_KEY` and `HIKMAH_HOOK_ENGINE=jev`; it is a measured screen (about one false completion in six), deliberately not a fact-checker.
 - `hikmah recall --query "<agent claim>"` — check the claim against recorded memory before trusting it.
 - `hikmah verify-ledger` — confirm the record being cited has not been altered.
