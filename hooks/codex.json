@@ -1,6 +1,30 @@
 {
-  "description": "Hikmah Stack completion hygiene gate. Runs an installed hikmah binary, then the zero-install Python fallback; never compiles code at stop time.",
+  "description": "Hikmah Stack hooks: session context and per-prompt skill routing (plus recalled memory when the hikmah CLI is installed), and the completion hygiene gate, which runs an installed hikmah binary, then the zero-install Python fallback. Never compiles code.",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${PLUGIN_ROOT}/hooks/context.sh\" session-start",
+            "timeout": 10,
+            "statusMessage": "Loading Hikmah Stack context"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${PLUGIN_ROOT}/hooks/context.sh\" prompt",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

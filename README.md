@@ -96,8 +96,9 @@ The table below separates executable evidence from architectural intent.
 | TypeSafe Jev adapter (opt-in, `jev` feature) | [`jev`](runtime/hikmah-kernel/src/jev.rs) and [tests](runtime/hikmah-kernel/tests/jev.rs) with a captured `jev-1.13.0` response | Implemented; offline tests plus an ignored live test |
 | Outcome write-back and calibration (Brier, ECE) | [`calibration`](runtime/hikmah-kernel/src/calibration.rs), CLI `predict`, `outcome`, and `calibration` | Implemented and tested. Engine answers and forecasts recorded by people or agents (`predict`) get separate rows on the same family, keyed by the source's class (`forecaster_kind`) as well as its name. A family is `measurable` at `calibration_min_outcomes` resolved predictions (policy, default 50); below that its Brier is shown with its `n`, labelled `anecdotal`. It is `calibrated` only with at least 50 outcomes whatever the policy, if Spiegelhalter's Z test does not reject (alpha 0.05), and if it beats the base-rate Brier. `--family-prefix` adds one pooled row per forecaster |
 | Narrow completion-claim hygiene | [Rust Truth Gate](runtime/hikmah-kernel/src/hook.rs), [launcher](hooks/truth_gate.sh), [Python fallback](hooks/truth_gate.py), [golden cases](hooks/truth_gate_cases.json) | Implemented. Rust and Python pass the same golden cases in CI. Deliberately not a fact-checker. The rules rarely fire on real agent "done" messages. The optional engine mode is a measured screen: it catches about one false completion in six ([numbers](docs/DECISION_PORT.md#truth-gate-engine-mode-measured-not-assumed)). With `HIKMAH_HOOK_RECORD` and `hikmah gate-threshold`, the threshold can be re-chosen from your own recorded outcomes ([how](docs/DECISION_PORT.md#choosing-the-threshold-from-your-own-traffic)). |
+| Session context and per-prompt skill routing | [launcher](hooks/context.sh), [hook](hooks/context.py), [doctrine](hooks/session_context.md), [tests](hooks/test_context_hooks.py) | Implemented for Claude Code and Codex (SessionStart and UserPromptSubmit). At session start it injects skill routing and working rules, plus overdue or due-this-week commitments and open conflicts when a `hikmah` binary and `.hikmah/memory.jsonl` exist. Per prompt it names the matching skill(s) with narrow keyword rules, and adds the top recalled traces that share a term or tag with the prompt. Read-only; `HIKMAH_CONTEXT=off` turns it off |
 | Reusable host packaging | [Codex manifest](.codex-plugin/plugin.json), [Claude manifest](.claude-plugin/plugin.json), [Kimi manifest](kimi.plugin.json), and [portable skills](skills/) | Configuration and instruction layer; versions, names, and hook paths checked by `hikmah validate` |
-| Automated validation | [GitHub Actions workflow](.github/workflows/validate.yml): fmt, Clippy (with and without network features), Rust tests, package validation, Python golden cases, hook launcher smoke test | CI-backed repository validation |
+| Automated validation | [GitHub Actions workflow](.github/workflows/validate.yml): fmt, Clippy (with and without network features), Rust tests, package validation, Python golden cases, context hook tests, hook launcher smoke tests | CI-backed repository validation |
 
 ## Maturity boundary
 
@@ -107,7 +108,7 @@ The table below separates executable evidence from architectural intent.
 | Persistence | Local append-only JSONL, hash-chained over exact payload bytes, with an exclusive write lock, torn-tail repair, and a head file. The chain is not keyed. On its own it detects a record edited, reordered, or injected inside it. The head file adds truncation, rewrites, and records appended without a head update: those fail `verify-ledger` and block writes until a person accepts them (`verify-ledger --accept-tail` or `--reset-head`, both refused inside a detected AI agent session). Neither detects an append or re-chain by someone who can also update or delete the head file; only a head hash pinned outside the writer's reach (`--expect-head`) does |
 | Retrieval | Deterministic relevance gate (terms or tags must match), light stemming, CJK bigrams, metadata scaling, duplicate folding; no embeddings |
 | Model integration | Typed `DecisionEngine` port with `NoEngine` and an opt-in TypeSafe Jev adapter; the text `ProposalEngine` still ships only `NoModel` |
-| Agent packaging | Portable instruction skills and thin Codex, Claude Code, and Kimi manifests |
+| Agent packaging | Portable instruction skills, thin Codex, Claude Code, and Kimi manifests, and SessionStart / UserPromptSubmit context hooks for Claude Code and Codex |
 | Tests | 185 unit and integration tests (2 ignored: an explicit release-mode performance gate and a live TypeSafe Jev test) covering every capability row; shared Truth Gate golden cases (messages and malformed payloads) for Rust and Python |
 | Deployment | Local source/CLI use; no hosted service or public production deployment is claimed |
 
@@ -287,7 +288,7 @@ Register the repository as a marketplace source:
 codex plugin marketplace add CodeWithJuber/hikmah-stack
 ```
 
-This command adds the catalog source; install and test the plugin from the ChatGPT desktop app's Plugins Directory. The included Codex manifest references the portable skills and the command-based completion hook.
+This command adds the catalog source; install and test the plugin from the ChatGPT desktop app's Plugins Directory. The included Codex manifest references the portable skills, the session-context and prompt-routing hooks, and the command-based completion hook.
 
 ### Claude Code
 
@@ -297,6 +298,14 @@ This command adds the catalog source; install and test the plugin from the ChatG
 ```
 
 If the install summary asks you to activate the plugin, run `/reload-plugins`. The repository also includes a read-only Claude orchestrator adapter and a deterministic completion check (the Truth Gate Stop hook).
+
+The plugin runs three hooks automatically, with no setup:
+
+- **SessionStart** (`hooks/context.sh session-start`) injects the skill routing and working rules. If a `hikmah` binary is installed and the project has `.hikmah/memory.jsonl`, it also injects commitments that are overdue or due within 7 days, and the count of open claim conflicts.
+- **UserPromptSubmit** (`hooks/context.sh prompt`) names the skill(s) that match the prompt, such as `decision-forge` for "should we migrate or wait?". With the kernel and a store, it also adds the top recalled traces for the prompt. It prints nothing when nothing matches.
+- **Stop** (`hooks/truth_gate.sh`) runs the Truth Gate.
+
+The context hooks need `sh`. Prompt routing and memory formatting also need Python 3; without it, SessionStart still injects the static routing. Memory needs the kernel (`scripts/install-kernel.sh`). Set `HIKMAH_CONTEXT=off` to turn off both context hooks.
 
 ### Kimi
 
@@ -364,7 +373,7 @@ playbooks/                  operational cognitive loops
 lenses/                     reusable diagnostic perspectives
 docs/                       architecture, memory, research, ethics, and evaluation
 examples/                   symbolic planning and decision-frame inputs
-hooks/                      Rust-first completion hook plus Python fallback
+hooks/                      session context and prompt routing; Rust-first completion hook plus Python fallback
 .codex-plugin/              Codex plugin manifest
 .claude-plugin/             Claude Code plugin metadata
 kimi.plugin.json            Kimi plugin manifest

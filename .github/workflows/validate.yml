@@ -39,6 +39,14 @@ jobs:
           echo "$out" | python3 -c 'import json,sys; assert json.load(sys.stdin)["decision"] == "block"'
           out="$(printf 'not json' | CLAUDE_PLUGIN_ROOT=/nonexistent PATH=/usr/bin:/bin sh hooks/truth_gate.sh)"
           test "$out" = "{}"
+      - name: Context hooks (session context, prompt routing, kernel recall formatting)
+        run: python3 hooks/test_context_hooks.py
+      - name: Context hook launcher always exits 0 and injects plain text
+        run: |
+          printf '{"source":"startup"}' | CLAUDE_PLUGIN_ROOT="$PWD" PATH=/usr/bin:/bin sh hooks/context.sh session-start | grep -q 'Hikmah Stack is active'
+          printf '{"prompt":"Should we migrate now or wait?"}' | CLAUDE_PLUGIN_ROOT="$PWD" PATH=/usr/bin:/bin sh hooks/context.sh prompt | grep -q 'decision-forge'
+          out="$(printf 'not json' | CLAUDE_PLUGIN_ROOT=/nonexistent PATH=/usr/bin:/bin sh hooks/context.sh prompt)"
+          test -z "$out"
 
   # The ledger's locking and torn-tail repair behave differently on Windows (mandatory locks,
   # append-only handles cannot truncate), so the kernel tests also run there.
@@ -63,6 +71,11 @@ jobs:
         run: |
           out="$(printf '{"last_assistant_message":"Done. TODO: tests"}' | CLAUDE_PLUGIN_ROOT="$PWD" sh hooks/truth_gate.sh)"
           echo "$out" | python -c 'import json,sys; assert json.load(sys.stdin)["decision"] == "block"'
+      - name: Context hooks run on Windows
+        shell: bash
+        run: |
+          python hooks/test_context_hooks.py
+          printf '{"prompt":"Should we migrate now or wait?"}' | CLAUDE_PLUGIN_ROOT="$PWD" sh hooks/context.sh prompt | grep -q 'decision-forge'
 
   # The crate declares `rust-version = "1.89"`: this job keeps that claim honest.
   # It checks the locked dependency tree compiles on 1.89, so MSRV cannot
