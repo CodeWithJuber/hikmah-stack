@@ -3,7 +3,9 @@
 
 ## Unreleased
 
-Fixes for gaps found by the research-to-implementation audit.
+## 3.2.0 - 2026-11-03
+
+Fixes for gaps found by the research-to-implementation audit, plus automatic context hooks for Claude Code and Codex.
 
 ### Hooks
 - **The plugin now injects context automatically.** Before, the only hook was the Stop-time Truth Gate, so a session started with nothing from Hikmah Stack in context. Claude Code and Codex now also run:

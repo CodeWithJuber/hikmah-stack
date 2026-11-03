@@ -15,7 +15,7 @@ import os
 import shutil
 import subprocess
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 
 
 class HikmahError(Exception):
