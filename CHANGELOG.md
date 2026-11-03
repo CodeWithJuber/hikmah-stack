@@ -5,6 +5,14 @@
 
 Fixes for gaps found by the research-to-implementation audit.
 
+### Hooks
+- **The plugin now injects context automatically.** Before, the only hook was the Stop-time Truth Gate, so a session started with nothing from Hikmah Stack in context. Claude Code and Codex now also run:
+  - `hooks/context.sh session-start` on SessionStart. It injects skill routing and working rules from `hooks/session_context.md`. With a `hikmah` binary and an existing `.hikmah/memory.jsonl`, it adds commitments that are overdue or due within 7 days, and the count of open claim conflicts.
+  - `hooks/context.sh prompt` on UserPromptSubmit. It names the skill(s) whose problem shape the prompt matches, using narrow keyword rules that include a few Hinglish decision words. With the kernel and a store, it adds the top three recalled traces that share a term or tag with the prompt, each with its source and verified flag. It prints nothing when nothing matches.
+- The context hooks are read-only and always exit 0. They run only the kernel's `recall`, `commitments`, and `conflicts`, never create a store, and never compile. Without Python, SessionStart still prints the static routing. `HIKMAH_CONTEXT=off` (also `0`, `false`, `no`) turns both off.
+- New `hooks/test_context_hooks.py` runs in CI. It covers the hook wiring, routing hits and false positives, malformed payloads, the off switch, the no-Python fallback, kernel output formatting (with a stand-in binary and with the built kernel), and a failing kernel.
+- `SECURITY.md` no longer says Claude Code runs a prompt-based Stop review. No such hook is wired.
+
 ### Memory
 - **Memory refuses credentials.** Trace validation runs the credential detector already used for outbound engine requests over content, tags, claim key and value, source, and locator. `remember`, `outcome`, `ask --record`, and every other append path reject a match with an `invalid input` error that names the field without echoing the value. Stores that already contain such text still open; only new writes are checked.
 - **Recall shows conflicts and corrections beside the claim.** Each recall result now has:
