@@ -77,6 +77,11 @@ def check_config(failures):
             want = f'sh "${{{var}}}/hooks/context.sh" {mode}'
             if not any(h.get("type") == "command" and h.get("command") == want for h in cmds):
                 failures.append(f"{name}: {event} must run `{want}`")
+            if event == "SessionStart":
+                for g in hooks.get(event, []):
+                    if g.get("matcher") != "startup|clear|compact":
+                        failures.append(f"{name}: SessionStart matcher must be startup|clear|compact "
+                                        "(resume and fork already carry the context; re-injecting wastes tokens)")
             for h in cmds:
                 if int(h.get("timeout", 0)) > 15:
                     failures.append(f"{name}: {event} timeout {h.get('timeout')}s is too slow for a context hook")
@@ -92,8 +97,8 @@ def check_doctrine(failures):
             failures.append(f"context.ROUTES names missing skill {skill}")
     if "hikmah-orchestrator" not in SKILLS:
         failures.append("route() suggests hikmah-orchestrator, which is not a skill")
-    if len(text) > 4000:
-        failures.append(f"session_context.md is {len(text)} chars; keep the always-on context small")
+    if len(text) > 1200:
+        failures.append(f"session_context.md is {len(text)} chars; it costs tokens every session, keep it under 1200")
 
 
 def check_routes(failures):
@@ -183,7 +188,7 @@ def check_fake_kernel(failures, tmp):
     out = launcher("session-start", {"cwd": str(project)}, env).stdout.decode("utf-8")
     if "Rotate the API keys (person:test; unverified; tr_due) (overdue by 3d)" not in out:
         failures.append(f"session-start should list the overdue commitment: {out[-400:]!r}")
-    if "Open claim conflicts: 1." not in out:
+    if "Open claim conflicts: 1 " not in out:
         failures.append("session-start should count open conflicts")
 
     write_fake_kernel(bin_dir, recall, commitments, conflicts, fail=True)
