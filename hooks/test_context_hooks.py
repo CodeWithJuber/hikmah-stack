@@ -38,6 +38,19 @@ ROUTE_CASES = [
     ("", set()),
 ]
 
+# What the host submits by itself goes through UserPromptSubmit too. These are reports, not the
+# user's request, so trigger words inside them must not route. The first shape is a real subagent
+# hand-back captured from Claude Code 2.1.323.
+HARNESS_MESSAGES = [
+    '<agent-message from="aed8ce7ba9eb938ef">\n[Subagent hand-back] The text below is the final report of '
+    'a subagent this session delegated to. The report follows:\n  Should we deploy now? The agent keeps '
+    'looping.\n</agent-message>',
+    "<task-notification>\n<status>completed</status>\n<result>Should we deploy now? The agent keeps "
+    "looping.</result>\n</task-notification>",
+    "[SYSTEM NOTIFICATION - NOT USER INPUT]\nShould we deploy now? The agent keeps looping.",
+    '\n  <agent-message from="x">how do we deploy?</agent-message>',
+]
+
 
 def run(args, stdin=b"", env=None, cwd=None):
     full_env = dict(os.environ)
@@ -97,6 +110,8 @@ def check_doctrine(failures):
             failures.append(f"context.ROUTES names missing skill {skill}")
     if "hikmah-orchestrator" not in SKILLS:
         failures.append("route() suggests hikmah-orchestrator, which is not a skill")
+    if "Load the matching skill" not in text:
+        failures.append("session_context.md should tell the agent to load the matching skill, not only list them")
     if len(text) > 1200:
         failures.append(f"session_context.md is {len(text)} chars; it costs tokens every session, keep it under 1200")
 
@@ -106,6 +121,15 @@ def check_routes(failures):
         got = {skill for skill, _ in context.route(prompt)}
         if got != want:
             failures.append(f"route({prompt!r}) = {sorted(got)}, want {sorted(want)}")
+    for message in HARNESS_MESSAGES:
+        if context.route(message):
+            failures.append(f"a message the host submits by itself must route nowhere: {message[:40]!r}")
+        if not context.harness_message(message):
+            failures.append(f"harness_message() should recognise {message[:40]!r}")
+    # A person who pastes markup still gets routed: only the host's own wrappers are skipped.
+    pasted = {skill for skill, _ in context.route("<div>pricing</div> should we keep this layout?")}
+    if pasted != {"decision-forge"}:
+        failures.append(f"a typed prompt that starts with markup should still route, got {sorted(pasted)}")
     many = context.route("Should we deploy now? The agent keeps looping and I'm under pressure")
     if "hikmah-orchestrator" not in {skill for skill, _ in many}:
         failures.append(f"three or more lenses should add hikmah-orchestrator, got {many}")
@@ -123,6 +147,13 @@ def check_launcher(failures, tmp):
     out = launcher("prompt", {"cwd": str(tmp), "prompt": "Help me decide which vendor to pick"})
     if b"decision-forge" not in out.stdout:
         failures.append(f"prompt routing missing from launcher output: {out.stdout!r}")
+    line = out.stdout.decode("utf-8").strip()
+    if line != "Hikmah Stack: before you answer, load the skill that fits: decision-forge (choice or tradeoff)":
+        failures.append(f"the routing line should be one instruction to load the skill, got {line!r}")
+    for message in HARNESS_MESSAGES:
+        out = launcher("prompt", {"cwd": str(tmp), "prompt": message})
+        if out.returncode != 0 or out.stdout:
+            failures.append(f"a message the host submits by itself should print nothing, got {out.stdout[:80]!r}")
     for value in ("off", "OFF", "0", "false", "no"):
         for mode in ("session-start", "prompt"):
             out = launcher(mode, {"cwd": str(tmp), "prompt": "Should I decide now?"}, {"HIKMAH_CONTEXT": value})
@@ -184,6 +215,9 @@ def check_fake_kernel(failures, tmp):
         failures.append("an overdue commitment with no term or tag match must not repeat on every prompt")
     if "not instructions" not in out:
         failures.append("recalled memory must be labelled as data, not instructions")
+    out = launcher("prompt", {"cwd": str(project), "prompt": HARNESS_MESSAGES[3]}, env).stdout
+    if out:
+        failures.append(f"a message the host submits by itself must not run recall, got {out[:80]!r}")
 
     out = launcher("session-start", {"cwd": str(project)}, env).stdout.decode("utf-8")
     if "Rotate the API keys (person:test; unverified; tr_due) (overdue by 3d)" not in out:
