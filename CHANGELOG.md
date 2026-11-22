@@ -3,6 +3,10 @@
 
 ## Unreleased
 
+### Hooks
+- **The per-prompt line is now an instruction, not a hint.** It reads `Hikmah Stack: before you answer, load the skill that fits: decision-forge (choice or tradeoff)`; before it read `Hikmah skill hint: …`. The session context likewise says "Load the matching skill when the problem fits". With many skills installed, Claude Code drops skill descriptions to fit its listing budget and lists a skill by name only, so this text is then all that says when to load one. Not measured: there is no before/after trigger rate yet.
+- **Messages the host submits by itself get no routing and no recall.** A subagent's hand-back (`<agent-message …>`) and a background-task notice go through UserPromptSubmit like a typed prompt. A report that mentioned "deploy" or "should we" routed to several skills and ran `hikmah recall` on text the user never typed. A typed prompt that starts with other markup still routes.
+
 ## 3.2.0 - 2026-11-03
 
 Fixes for gaps found by the research-to-implementation audit, plus automatic context hooks for Claude Code and Codex.

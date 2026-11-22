@@ -8,7 +8,9 @@ session-start prints hooks/session_context.md (skill routing and working rules).
 `hikmah` kernel binary and the project's memory store both exist, it then adds commitments
 that are overdue or due within a week, and open claim conflicts.
 
-prompt names the Hikmah skill(s) whose problem shape the prompt matches. When the kernel and
+prompt tells the agent to load the Hikmah skill(s) whose problem shape the prompt matches. A
+message the host submits by itself (a subagent's hand-back, a background-task notice) is a
+report, not a request, and gets nothing. When the kernel and
 the store exist, it adds the top traces `hikmah recall` returns for the prompt. It prints
 nothing when nothing matched.
 
@@ -76,6 +78,10 @@ ROUTES = [
 ]
 COMPILED = [(skill, re.compile(pattern, re.IGNORECASE), why) for skill, pattern, why in ROUTES]
 
+# What the host submits by itself: a subagent's hand-back or a background-task notice. It goes
+# through UserPromptSubmit like a typed prompt, but it is a report, not the user's request.
+HARNESS_MESSAGE = re.compile(r"\s*(<(agent-message|task-notification)\b|\[SYSTEM NOTIFICATION\b)")
+
 
 def disabled(env=None):
     env = os.environ if env is None else env
@@ -91,9 +97,16 @@ def read_payload(raw):
     return value if isinstance(value, dict) else {}
 
 
+def harness_message(prompt):
+    """True for text the host submitted by itself; it gets no routing and no recall."""
+    return isinstance(prompt, str) and HARNESS_MESSAGE.match(prompt) is not None
+
+
 def route(prompt):
     """Return [(skill, why)] for every route the prompt matches, in ROUTES order."""
     if not isinstance(prompt, str) or not prompt.strip() or prompt.lstrip().startswith("/"):
+        return []
+    if harness_message(prompt):
         return []
     hits = [(skill, why) for skill, pattern, why in COMPILED if pattern.search(prompt)]
     if len(hits) >= 3:
@@ -213,12 +226,15 @@ def session_start(payload):
 
 def prompt(payload):
     text = payload.get("prompt")
-    if not isinstance(text, str) or not text.strip():
+    if not isinstance(text, str) or not text.strip() or harness_message(text):
         return ""
     parts = []
     hits = route(text)
     if hits:
-        parts.append("Hikmah skill hint: " + "; ".join(f"{skill} ({why})" for skill, why in hits))
+        # An instruction, not a hint. A host with many skills installed lists a skill by name
+        # only, and then this line is all that says when to load it.
+        parts.append("Hikmah Stack: before you answer, load the skill that fits: "
+                     + "; ".join(f"{skill} ({why})" for skill, why in hits))
     kernel = find_kernel()
     store = project_dir(payload) / STORE
     if kernel and store.is_file():

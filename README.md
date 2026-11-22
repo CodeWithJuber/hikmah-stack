@@ -302,7 +302,7 @@ If the install summary asks you to activate the plugin, run `/reload-plugins`. T
 The plugin runs three hooks automatically, with no setup:
 
 - **SessionStart** (`hooks/context.sh session-start`) injects the skill routing and working rules. If a `hikmah` binary is installed and the project has `.hikmah/memory.jsonl`, it also injects commitments that are overdue or due within 7 days, and the count of open claim conflicts.
-- **UserPromptSubmit** (`hooks/context.sh prompt`) names the skill(s) that match the prompt, such as `decision-forge` for "should we migrate or wait?". With the kernel and a store, it also adds the top recalled traces for the prompt. It prints nothing when nothing matches.
+- **UserPromptSubmit** (`hooks/context.sh prompt`) tells the agent to load the skill(s) that match the prompt, such as `decision-forge` for "should we migrate or wait?". A message the host submits by itself (a subagent's hand-back, a background-task notice) gets nothing. With the kernel and a store, it also adds the top recalled traces for the prompt. It prints nothing when nothing matches.
 - **Stop** (`hooks/truth_gate.sh`) runs the Truth Gate.
 
 The context hooks need `sh`. Prompt routing and memory formatting also need Python 3; without it, SessionStart still injects the static routing. Memory needs the kernel (`scripts/install-kernel.sh`). Set `HIKMAH_CONTEXT=off` to turn off both context hooks.
